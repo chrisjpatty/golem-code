@@ -2,11 +2,22 @@ import { useRef, useMemo, useCallback, useImperativeHandle, forwardRef } from "r
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
+// Frame-rate independent lerp: same visual result regardless of FPS
+function damp(current: number, target: number, speed: number, delta: number): number {
+  return current + (target - current) * (1 - Math.exp(-speed * delta));
+}
+
 export type GolemFaceHandle = {
   startSpeaking: () => void;
   stopSpeaking: () => void;
   startEyeGlow: () => void;
   stopEyeGlow: () => void;
+  headSnapLeft: () => void;
+  headSnapRight: () => void;
+  headSnapDownLeft: () => void;
+  headSnapDownRight: () => void;
+  headShake: () => void;
+  headNod: () => void;
 };
 
 // Eye fill geometry — exact match to the socket hole vertices, pushed forward
@@ -407,6 +418,23 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
     flickerTarget: 1.0,
   });
 
+  // Head gesture state
+  const headGesture = useRef({
+    type: "idle" as "idle" | "snap" | "shake" | "nod",
+    phase: "idle" as "idle" | "snap" | "hold" | "return" | "windup" | "oscillate",
+    currentY: 0,
+    currentX: 0,
+    targetY: 0,
+    targetX: 0,
+    holdUntil: 0,
+    // For oscillating gestures (shake/nod)
+    startedAt: 0,
+    amplitude: 0,
+    frequency: 0,
+    cycles: 0,
+    phaseOffset: 0,
+  });
+
   // Speaking state
   const speaking = useRef({
     active: false,
@@ -433,35 +461,118 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
         eyeGlow.current.phase = "fade";
       }
     },
+    headSnapLeft: () => {
+      const hg = headGesture.current;
+      hg.type = "snap"; hg.phase = "snap";
+      hg.targetY = -0.6; hg.targetX = -0.2;
+    },
+    headSnapRight: () => {
+      const hg = headGesture.current;
+      hg.type = "snap"; hg.phase = "snap";
+      hg.targetY = 0.6; hg.targetX = -0.2;
+    },
+    headSnapDownLeft: () => {
+      const hg = headGesture.current;
+      hg.type = "snap"; hg.phase = "snap";
+      hg.targetY = -0.6; hg.targetX = 0.2;
+    },
+    headSnapDownRight: () => {
+      const hg = headGesture.current;
+      hg.type = "snap"; hg.phase = "snap";
+      hg.targetY = 0.6; hg.targetX = 0.2;
+    },
+    headShake: () => {
+      const hg = headGesture.current;
+      hg.type = "shake"; hg.phase = "windup";
+      hg.startedAt = 0; hg.amplitude = 0.4; hg.frequency = 16; hg.cycles = 3;
+      hg.targetY = 0.15; hg.targetX = 0;
+    },
+    headNod: () => {
+      const hg = headGesture.current;
+      hg.type = "nod"; hg.phase = "windup";
+      hg.startedAt = 0; hg.amplitude = 0.25; hg.frequency = 10; hg.cycles = 2;
+      hg.targetY = 0; hg.targetX = -0.12;
+    },
   }));
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
     const t = clock.getElapsedTime();
-    // Slow head bob
+    const d = Math.min(delta, 0.1); // clamp to avoid huge jumps on tab refocus
+    // Head movement
     if (groupRef.current) {
       groupRef.current.position.y = Math.sin(t * 0.5) * 0.12;
+
+      const hg = headGesture.current;
+      if (hg.phase === "snap") {
+        hg.currentY = damp(hg.currentY, hg.targetY, 40, d);
+        hg.currentX = damp(hg.currentX, hg.targetX, 40, d);
+        if (Math.abs(hg.currentY - hg.targetY) < 0.01) {
+          hg.phase = "hold";
+          hg.holdUntil = t + 1.0;
+        }
+      } else if (hg.phase === "hold") {
+        if (t > hg.holdUntil) {
+          hg.phase = "return";
+        }
+      } else if (hg.phase === "windup") {
+        hg.currentY = damp(hg.currentY, hg.targetY, 4, d);
+        hg.currentX = damp(hg.currentX, hg.targetX, 4, d);
+        if (Math.abs(hg.currentY - hg.targetY) < 0.005 && Math.abs(hg.currentX - hg.targetX) < 0.005) {
+          hg.phase = "oscillate";
+          hg.startedAt = 0;
+          const windupVal = hg.type === "shake" ? hg.currentY : hg.currentX;
+          hg.phaseOffset = Math.asin(Math.min(1, Math.max(-1, windupVal / hg.amplitude)));
+        }
+      } else if (hg.phase === "oscillate") {
+        if (hg.startedAt === 0) hg.startedAt = t;
+        const elapsed = t - hg.startedAt;
+        const duration = hg.cycles * (Math.PI * 2 / hg.frequency);
+        const decay = Math.max(0, 1 - elapsed / duration);
+        const wave = Math.sin(elapsed * hg.frequency + hg.phaseOffset) * hg.amplitude * decay;
+
+        if (hg.type === "shake") {
+          hg.currentY = wave;
+          hg.currentX = damp(hg.currentX, 0, 14, d);
+        } else {
+          hg.currentX = wave;
+          hg.currentY = damp(hg.currentY, 0, 14, d);
+        }
+
+        if (decay <= 0) {
+          hg.phase = "return";
+        }
+      } else if (hg.phase === "return") {
+        hg.currentY = damp(hg.currentY, 0, 5, d);
+        hg.currentX = damp(hg.currentX, 0, 5, d);
+        if (Math.abs(hg.currentY) < 0.005 && Math.abs(hg.currentX) < 0.005) {
+          hg.currentY = 0;
+          hg.currentX = 0;
+          hg.phase = "idle";
+          hg.type = "idle";
+        }
+      }
+
+      groupRef.current.rotation.y = hg.currentY;
+      groupRef.current.rotation.x = hg.currentX;
     }
     // Jaw animation
     if (jawRef.current) {
       const sp = speaking.current;
       if (sp.active) {
-        // Pick new syllable targets at irregular intervals
         if (t > sp.nextSyllableAt) {
           const openness = 0.02 + Math.random() * 0.18;
           sp.targetAngle = openness;
-          sp.targetDrop = openness * 1.2; // drop proportional to opening
+          sp.targetDrop = openness * 1.2;
           sp.nextSyllableAt = t + 0.06 + Math.random() * 0.14;
         }
-        // Lerp toward targets for smooth motion
-        sp.currentAngle += (sp.targetAngle - sp.currentAngle) * 0.3;
-        sp.currentDrop += (sp.targetDrop - sp.currentDrop) * 0.3;
+        sp.currentAngle = damp(sp.currentAngle, sp.targetAngle, 22, d);
+        sp.currentDrop = damp(sp.currentDrop, sp.targetDrop, 22, d);
         jawRef.current.rotation.x = sp.currentAngle;
         jawRef.current.position.y = -0.3 - sp.currentDrop;
       } else {
-        // Ease back to idle breathing
         const idleAngle = Math.sin(t * 0.8) * 0.03;
-        sp.currentAngle += (idleAngle - sp.currentAngle) * 0.1;
-        sp.currentDrop += (0 - sp.currentDrop) * 0.1;
+        sp.currentAngle = damp(sp.currentAngle, idleAngle, 6, d);
+        sp.currentDrop = damp(sp.currentDrop, 0, 6, d);
         jawRef.current.rotation.x = sp.currentAngle;
         jawRef.current.position.y = -0.3 - sp.currentDrop;
       }
@@ -470,22 +581,20 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
     const eg = eyeGlow.current;
     if (eg.phase !== "off") {
       if (eg.phase === "ramp") {
-        // Fade in (3x faster than fade out)
-        eg.intensity += (1.0 - eg.intensity) * 0.12;
+        eg.intensity = damp(eg.intensity, 1.0, 8, d);
         if (eg.intensity > 0.95) {
           eg.intensity = 1.0;
           eg.phase = "hold";
           eg.nextFlickerAt = t;
         }
       } else if (eg.phase === "hold") {
-        // Subtle flicker while holding
         if (t > eg.nextFlickerAt) {
           eg.flickerTarget = 0.5 + Math.random() * 0.5;
           eg.nextFlickerAt = t + 0.04 + Math.random() * 0.12;
         }
-        eg.intensity += (eg.flickerTarget - eg.intensity) * 0.3;
+        eg.intensity = damp(eg.intensity, eg.flickerTarget, 22, d);
       } else if (eg.phase === "fade") {
-        eg.intensity += (0 - eg.intensity) * 0.06;
+        eg.intensity = damp(eg.intensity, 0, 4, d);
         if (eg.intensity < 0.005) {
           eg.intensity = 0;
           eg.phase = "off";

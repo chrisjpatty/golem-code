@@ -31,6 +31,30 @@ export function DevPanel({ faceRef }: { faceRef: React.RefObject<GolemFaceHandle
         label="Stop Eye Glow"
         onClick={() => faceRef.current?.stopEyeGlow()}
       />
+      <Button
+        label="Head Snap Left"
+        onClick={() => faceRef.current?.headSnapLeft()}
+      />
+      <Button
+        label="Head Snap Right"
+        onClick={() => faceRef.current?.headSnapRight()}
+      />
+      <Button
+        label="Snap Down Left"
+        onClick={() => faceRef.current?.headSnapDownLeft()}
+      />
+      <Button
+        label="Snap Down Right"
+        onClick={() => faceRef.current?.headSnapDownRight()}
+      />
+      <Button
+        label="Head Shake"
+        onClick={() => faceRef.current?.headShake()}
+      />
+      <Button
+        label="Head Nod"
+        onClick={() => faceRef.current?.headNod()}
+      />
     </div>
   );
 }
