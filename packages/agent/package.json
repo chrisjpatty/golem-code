@@ -1,0 +1,14 @@
+{
+  "name": "@golem-code/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun test src/"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@golem-code/types": "workspace:*"
+  }
+}
