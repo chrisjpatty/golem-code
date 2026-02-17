@@ -9,7 +9,7 @@ export function sdkMessageToGolemEvents(msg: SDKMessage): GolemEvent[] {
   const now = Date.now();
 
   switch (msg.type) {
-    // -- System init --
+    // -- System init / status / task notification --
     case "system": {
       if (msg.subtype === "init") {
         return [
@@ -30,6 +30,15 @@ export function sdkMessageToGolemEvents(msg: SDKMessage): GolemEvent[] {
             taskId: msg.task_id,
             status: msg.status,
             summary: msg.summary,
+            timestamp: now,
+          },
+        ];
+      }
+      if (msg.subtype === "status") {
+        return [
+          {
+            type: "status:update",
+            status: msg.status,
             timestamp: now,
           },
         ];
@@ -132,6 +141,18 @@ export function sdkMessageToGolemEvents(msg: SDKMessage): GolemEvent[] {
           inputTokens: msg.usage.input_tokens,
           outputTokens: msg.usage.output_tokens,
           numTurns: msg.num_turns,
+          timestamp: now,
+        },
+      ];
+    }
+
+    // -- Tool use summary --
+    case "tool_use_summary": {
+      return [
+        {
+          type: "tool:summary",
+          summary: msg.summary,
+          toolUseIds: msg.preceding_tool_use_ids,
           timestamp: now,
         },
       ];

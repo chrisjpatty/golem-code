@@ -1,6 +1,14 @@
 import { useRef, useMemo, useCallback, useImperativeHandle, forwardRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import {
+  DEFAULT_FACE_PARAMS,
+  generateFaceParams,
+  createUpperFaceGeometry,
+  createJawGeometry,
+  createLeftEyeGeometry,
+  createRightEyeGeometry,
+} from "./faceGen";
 
 // Frame-rate independent lerp: same visual result regardless of FPS
 function damp(current: number, target: number, speed: number, delta: number): number {
@@ -12,6 +20,8 @@ export type GolemFaceHandle = {
   stopSpeaking: () => void;
   startEyeGlow: () => void;
   stopEyeGlow: () => void;
+  lookAtRandom: () => void;
+  lookCenter: () => void;
   headSnapLeft: () => void;
   headSnapRight: () => void;
   headSnapDownLeft: () => void;
@@ -19,39 +29,6 @@ export type GolemFaceHandle = {
   headShake: () => void;
   headNod: () => void;
 };
-
-// Eye fill geometry — exact match to the socket hole vertices, pushed forward
-function createLeftEyeGeometry(): THREE.BufferGeometry {
-  // Matches: 5=top, 6=outer, 7=bottom, 8=inner (from upper face)
-  const verts = new Float32Array([
-    -0.75, 1.2, 0.05,   // top
-    -1.1,  0.85, -0.05, // outer
-    -0.75, 0.5, 0.05,   // bottom
-    -0.4,  0.85, 0.1,   // inner
-  ]);
-  const indices = [0, 1, 2, 0, 2, 3];
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
-}
-
-function createRightEyeGeometry(): THREE.BufferGeometry {
-  // Matches: 9=top, 10=outer, 11=bottom, 12=inner (from upper face)
-  const verts = new Float32Array([
-    0.75, 1.2, 0.05,    // top
-    1.1,  0.85, -0.05,  // outer
-    0.75, 0.5, 0.05,    // bottom
-    0.4,  0.85, 0.1,    // inner
-  ]);
-  const indices = [0, 3, 2, 0, 2, 1];
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
-}
 
 type EyeGlowPhase = "off" | "ramp" | "hold" | "fade";
 
@@ -62,182 +39,6 @@ type EyeGlowPhase = "off" | "ramp" | "hold" | "fade";
  * The upper face (including eye sockets) is one mesh.
  * The jaw is a separate mesh that pivots at the jaw hinge.
  */
-
-// -- Upper face geometry (forehead, cheeks, nose, eye sockets) --
-
-function createUpperFaceGeometry(): GlitchGeo {
-  // Vertices: [x, y, z]
-  // The face is roughly 3 units wide, 4 units tall, centered at origin.
-  // Eye sockets are diamond-shaped holes.
-  const verts: [number, number, number][] = [
-    // 0: top center (forehead peak)
-    [0, 2.0, 0.0],
-    // 1: top left
-    [-1.0, 1.8, -0.1],
-    // 2: top right
-    [1.0, 1.8, -0.1],
-    // 3: far left temple
-    [-1.5, 1.0, -0.3],
-    // 4: far right temple
-    [1.5, 1.0, -0.3],
-
-    // Left eye diamond: 5=top, 6=left, 7=bottom, 8=right
-    // 5: left eye top
-    [-0.75, 1.2, 0.15],
-    // 6: left eye outer
-    [-1.1, 0.85, 0.05],
-    // 7: left eye bottom
-    [-0.75, 0.5, 0.15],
-    // 8: left eye inner
-    [-0.4, 0.85, 0.2],
-
-    // Right eye diamond: 9=top, 10=right, 11=bottom, 12=left
-    // 9: right eye top
-    [0.75, 1.2, 0.15],
-    // 10: right eye outer
-    [1.1, 0.85, 0.05],
-    // 11: right eye bottom
-    [0.75, 0.5, 0.15],
-    // 12: right eye inner
-    [0.4, 0.85, 0.2],
-
-    // 13: nose bridge (between eyes, high)
-    [0, 1.0, 0.35],
-    // 14: nose tip
-    [0, 0.4, 0.5],
-    // 15: nose left
-    [-0.25, 0.2, 0.35],
-    // 16: nose right
-    [0.25, 0.2, 0.35],
-
-    // 17: left cheek
-    [-1.3, 0.0, -0.15],
-    // 18: right cheek
-    [1.3, 0.0, -0.15],
-
-    // Mouth line / jaw hinge vertices (the split line between upper and lower face)
-    // 19: mouth left corner
-    [-0.7, -0.2, 0.15],
-    // 20: mouth right corner
-    [0.7, -0.2, 0.15],
-    // 21: upper lip center
-    [0, -0.1, 0.3],
-
-    // 22: left jaw hinge
-    [-1.4, -0.3, -0.25],
-    // 23: right jaw hinge
-    [1.4, -0.3, -0.25],
-  ];
-
-  // Triangles (indices into verts) — winding order for front face (CCW)
-  const faces: [number, number, number][] = [
-    // Forehead
-    [0, 1, 5],
-    [0, 5, 13],
-    [0, 13, 9],
-    [0, 9, 2],
-    [1, 3, 6],
-    [1, 6, 5],
-    [2, 9, 10],
-    [2, 10, 4],
-
-    // Between eyes (bridge)
-    [5, 8, 13],
-    [13, 12, 9],
-
-    // Left eye surround → below eye
-    [3, 17, 7],
-    [3, 7, 6],
-    [7, 17, 19],
-    [7, 19, 15],
-    [7, 15, 14],
-    [7, 14, 8],
-    [8, 14, 13],
-
-    // Right eye surround → below eye
-    [4, 10, 11],
-    [4, 11, 18],
-    [11, 16, 14],
-    [11, 14, 12],
-    [12, 14, 13],
-    [11, 20, 16],
-    [11, 18, 20],
-
-    // Nose
-    [14, 15, 21],
-    [14, 21, 16],
-
-    // Upper lip / mouth area
-    [15, 19, 21],
-    [16, 21, 20],
-
-    // Cheek to jaw hinge
-    [17, 22, 19],
-    [18, 20, 23],
-  ];
-
-  return buildGlitchGeo(verts, faces);
-}
-
-// -- Jaw geometry --
-
-function createJawGeometry(): GlitchGeo {
-  // The jaw is a separate piece that hangs below the mouth line.
-  // It pivots at roughly y=-0.3.
-  // These coordinates are relative — the jaw group will be positioned at the hinge point.
-  const verts: [number, number, number][] = [
-    // 0: left hinge
-    [-1.4, 0, -0.25],
-    // 1: right hinge
-    [1.4, 0, -0.25],
-    // 2: left mouth corner
-    [-0.7, 0, 0.3],
-    // 3: right mouth corner
-    [0.7, 0, 0.3],
-    // 4: lower lip center
-    [0, 0.05, 0.5],
-
-    // 5: chin center
-    [0, -1.0, 0.4],
-    // 6: chin left
-    [-0.8, -0.8, 0.25],
-    // 7: chin right
-    [0.8, -0.8, 0.25],
-
-    // 8: jaw left
-    [-1.2, -0.5, 0.0],
-    // 9: jaw right
-    [1.2, -0.5, 0.0],
-
-    // 10: chin bottom
-    [0, -1.2, 0.15],
-  ];
-
-  const faces: [number, number, number][] = [
-    // Lower lip
-    [2, 4, 6],
-    [4, 5, 6],
-    [4, 3, 7],
-    [4, 7, 5],
-
-    // Jaw sides
-    [0, 2, 6],
-    [0, 6, 8],
-    [3, 1, 9],
-    [3, 9, 7],
-
-    // Under jaw
-    [8, 6, 5],
-    [8, 5, 10],
-    [9, 10, 5],
-    [9, 5, 7],
-    [0, 8, 10],
-    [0, 10, 1],
-    [1, 10, 9],
-  ];
-
-  return buildGlitchGeo(verts, faces);
-}
 
 // -- Shared geometry builder with pre-allocated spike space --
 
@@ -395,19 +196,32 @@ function useVertexGlitch({ geo, baseVertCount, baseIndexCount }: GlitchGeo) {
   return update;
 }
 
-export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) {
+type GolemFaceProps = { slideLeft?: boolean; seed?: number; color?: string };
+
+export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function GolemFace({ slideLeft = false, seed, color }, ref) {
   const groupRef = useRef<THREE.Group>(null);
   const jawRef = useRef<THREE.Group>(null);
 
-  const upper = useMemo(() => createUpperFaceGeometry(), []);
-  const jaw = useMemo(() => createJawGeometry(), []);
+  const params = useMemo(
+    () => (seed != null ? generateFaceParams(seed) : DEFAULT_FACE_PARAMS),
+    [seed]
+  );
+
+  const upper = useMemo(() => {
+    const { verts, faces } = createUpperFaceGeometry(params);
+    return buildGlitchGeo(verts, faces);
+  }, [params]);
+  const jaw = useMemo(() => {
+    const { verts, faces } = createJawGeometry(params);
+    return buildGlitchGeo(verts, faces);
+  }, [params]);
 
   const glitchUpper = useVertexGlitch(upper);
   const glitchJaw = useVertexGlitch(jaw);
 
   // Eye glow
-  const leftEyeGeo = useMemo(() => createLeftEyeGeometry(), []);
-  const rightEyeGeo = useMemo(() => createRightEyeGeometry(), []);
+  const leftEyeGeo = useMemo(() => createLeftEyeGeometry(params), [params]);
+  const rightEyeGeo = useMemo(() => createRightEyeGeometry(params), [params]);
   const leftEyeMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const rightEyeMatRef = useRef<THREE.MeshBasicMaterial>(null);
 
@@ -461,25 +275,36 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
         eyeGlow.current.phase = "fade";
       }
     },
+    lookAtRandom: () => {
+      const hg = headGesture.current;
+      hg.type = "snap";
+      hg.phase = "snap";
+      hg.targetY = (Math.random() * 2 - 1) * 0.6;
+      hg.targetX = (Math.random() * 2 - 1) * 0.2;
+      hg.holdUntil = Infinity;
+    },
+    lookCenter: () => {
+      headGesture.current.phase = "return";
+    },
     headSnapLeft: () => {
       const hg = headGesture.current;
       hg.type = "snap"; hg.phase = "snap";
-      hg.targetY = -0.6; hg.targetX = -0.2;
+      hg.targetY = -0.6; hg.targetX = -0.2; hg.holdUntil = 0;
     },
     headSnapRight: () => {
       const hg = headGesture.current;
       hg.type = "snap"; hg.phase = "snap";
-      hg.targetY = 0.6; hg.targetX = -0.2;
+      hg.targetY = 0.6; hg.targetX = -0.2; hg.holdUntil = 0;
     },
     headSnapDownLeft: () => {
       const hg = headGesture.current;
       hg.type = "snap"; hg.phase = "snap";
-      hg.targetY = -0.6; hg.targetX = 0.2;
+      hg.targetY = -0.6; hg.targetX = 0.2; hg.holdUntil = 0;
     },
     headSnapDownRight: () => {
       const hg = headGesture.current;
       hg.type = "snap"; hg.phase = "snap";
-      hg.targetY = 0.6; hg.targetX = 0.2;
+      hg.targetY = 0.6; hg.targetX = 0.2; hg.holdUntil = 0;
     },
     headShake: () => {
       const hg = headGesture.current;
@@ -502,13 +327,19 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
     if (groupRef.current) {
       groupRef.current.position.y = Math.sin(t * 0.5) * 0.12;
 
+      // Slide left/right when output panel opens/closes
+      const targetX = slideLeft ? -2.5 : 0;
+      groupRef.current.position.x = damp(groupRef.current.position.x, targetX, 5, d);
+
       const hg = headGesture.current;
       if (hg.phase === "snap") {
         hg.currentY = damp(hg.currentY, hg.targetY, 40, d);
         hg.currentX = damp(hg.currentX, hg.targetX, 40, d);
         if (Math.abs(hg.currentY - hg.targetY) < 0.01) {
           hg.phase = "hold";
-          hg.holdUntil = t + 1.0;
+          if (isFinite(hg.holdUntil)) {
+            hg.holdUntil = t + 1.0;
+          }
         }
       } else if (hg.phase === "hold") {
         if (t > hg.holdUntil) {
@@ -620,7 +451,7 @@ export const GolemFace = forwardRef<GolemFaceHandle>(function GolemFace(_, ref) 
 
   const material = (
     <meshPhysicalMaterial
-      color="#cc1111"
+      color={color ?? "#cc1111"}
       flatShading
       roughness={0.15}
       metalness={0.95}

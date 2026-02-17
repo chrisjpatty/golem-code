@@ -1,6 +1,24 @@
 import { type GolemFaceHandle } from "./GolemFace";
 
-export function DevPanel({ faceRef }: { faceRef: React.RefObject<GolemFaceHandle | null> }) {
+export function DevPanel({
+  faceRef,
+  onClearConversation,
+  autoApprove,
+  onToggleAutoApprove,
+  onRandomFace,
+  onResetFace,
+  onRandomColor,
+  onResetColor,
+}: {
+  faceRef: React.RefObject<GolemFaceHandle | null>;
+  onClearConversation: () => void;
+  autoApprove: boolean;
+  onToggleAutoApprove: () => void;
+  onRandomFace: () => void;
+  onResetFace: () => void;
+  onRandomColor: () => void;
+  onResetColor: () => void;
+}) {
   return (
     <div
       style={{
@@ -15,6 +33,15 @@ export function DevPanel({ faceRef }: { faceRef: React.RefObject<GolemFaceHandle
         fontSize: 12,
       }}
     >
+      <Button
+        label={`Auto-Approve: ${autoApprove ? "ON" : "OFF"}`}
+        onClick={onToggleAutoApprove}
+        highlight={autoApprove}
+      />
+      <Button
+        label="Clear Conversation"
+        onClick={onClearConversation}
+      />
       <Button
         label="Start Speaking"
         onClick={() => faceRef.current?.startSpeaking()}
@@ -55,18 +82,24 @@ export function DevPanel({ faceRef }: { faceRef: React.RefObject<GolemFaceHandle
         label="Head Nod"
         onClick={() => faceRef.current?.headNod()}
       />
+      <Button label="Random Face" onClick={onRandomFace} />
+      <Button label="Reset Face" onClick={onResetFace} />
+      <Button label="Random Color" onClick={onRandomColor} />
+      <Button label="Reset Color" onClick={onResetColor} />
     </div>
   );
 }
 
-function Button({ label, onClick }: { label: string; onClick: () => void }) {
+function Button({ label, onClick, highlight }: { label: string; onClick: () => void; highlight?: boolean }) {
+  const bg = highlight ? "rgba(255,102,68,0.25)" : "rgba(255,255,255,0.08)";
+  const borderColor = highlight ? "rgba(255,102,68,0.5)" : "rgba(255,255,255,0.15)";
   return (
     <button
       onClick={onClick}
       style={{
-        background: "rgba(255,255,255,0.08)",
-        border: "1px solid rgba(255,255,255,0.15)",
-        color: "#ccc",
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        color: highlight ? "#ff6644" : "#ccc",
         padding: "6px 12px",
         borderRadius: 4,
         cursor: "pointer",
@@ -75,10 +108,10 @@ function Button({ label, onClick }: { label: string; onClick: () => void }) {
         textAlign: "left",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.background = "rgba(255,255,255,0.15)";
+        e.currentTarget.style.background = highlight ? "rgba(255,102,68,0.35)" : "rgba(255,255,255,0.15)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+        e.currentTarget.style.background = bg;
       }}
     >
       {label}

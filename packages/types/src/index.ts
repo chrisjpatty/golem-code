@@ -86,11 +86,18 @@ export type GolemSubagentComplete = {
 
 // -- Permission approval --
 
+export type GolemPermissionSuggestion = {
+  update: unknown;   // opaque PermissionUpdate — frontend never inspects
+  label: string;     // human-readable, generated server-side
+};
+
 export type GolemPermissionRequest = {
   type: "permission:request";
   requestId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  decisionReason?: string;
+  suggestions?: GolemPermissionSuggestion[];
   timestamp: number;
 };
 
@@ -115,6 +122,59 @@ export type GolemQuestionAsk = {
   timestamp: number;
 };
 
+// -- Voice / STT / TTS --
+
+export type GolemSttTranscript = {
+  type: "stt:transcript";
+  text: string;
+  isFinal: boolean;
+  timestamp: number;
+};
+
+export type GolemTtsStart = {
+  type: "tts:start";
+  text: string;
+  sampleRate: number;
+  timestamp: number;
+};
+
+export type GolemTtsEnd = {
+  type: "tts:end";
+  timestamp: number;
+};
+
+export type GolemSpeechText = {
+  type: "speech:text";
+  original: string;
+  summarized: string;
+  mode: "response" | "tool_intent";
+  timestamp: number;
+};
+
+// -- Tool use summary --
+
+export type GolemToolUseSummary = {
+  type: "tool:summary";
+  summary: string;
+  toolUseIds: string[];
+  timestamp: number;
+};
+
+// -- Status updates --
+
+export type GolemStatusUpdate = {
+  type: "status:update";
+  status: "compacting" | null;
+  timestamp: number;
+};
+
+// -- Conversation --
+
+export type GolemConversationCleared = {
+  type: "conversation:cleared";
+  timestamp: number;
+};
+
 // -- Server → Client events union --
 
 export type GolemEvent =
@@ -125,15 +185,25 @@ export type GolemEvent =
   | GolemToolStart
   | GolemToolProgress
   | GolemToolResult
+  | GolemToolUseSummary
   | GolemSubagentStart
   | GolemSubagentComplete
   | GolemPermissionRequest
-  | GolemQuestionAsk;
+  | GolemQuestionAsk
+  | GolemStatusUpdate
+  | GolemSttTranscript
+  | GolemTtsStart
+  | GolemTtsEnd
+  | GolemSpeechText
+  | GolemConversationCleared;
 
 // -- Client → Server commands --
 
 export type GolemCommand =
   | { type: "query:start"; prompt: string }
   | { type: "query:stop" }
-  | { type: "permission:response"; requestId: string; allow: boolean }
-  | { type: "question:answer"; requestId: string; answers: Record<string, string> };
+  | { type: "permission:response"; requestId: string; decision: "allow" | "allow-always" | "deny" }
+  | { type: "question:answer"; requestId: string; answers: Record<string, string> }
+  | { type: "voice:start"; sampleRate: number }
+  | { type: "voice:stop" }
+  | { type: "conversation:clear" };

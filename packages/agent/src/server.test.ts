@@ -65,7 +65,7 @@ function collectUntil(
         ws.send(JSON.stringify({
           type: "permission:response",
           requestId: event.requestId,
-          allow: true,
+          decision: "allow",
         } satisfies GolemCommand));
       }
       if (predicate(event)) {

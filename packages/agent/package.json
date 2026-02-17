@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",
+    "@fugood/whisper.node": "^1.0.16",
     "@golem-code/types": "workspace:*"
   }
 }
