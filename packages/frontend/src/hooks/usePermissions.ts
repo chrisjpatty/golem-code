@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import type { GolemCommand } from "@golem-code/types";
 import type { OutputEntry } from "../types";
-import { summarizeToolInput } from "../OutputPanel";
+import { summarizeToolInput } from "../outputUtils";
 
 type PermissionDecision = "allow" | "allow-always" | "deny";
 

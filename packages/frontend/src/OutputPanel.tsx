@@ -5,8 +5,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeLineDiff, type DiffLine } from "./diff";
 import { colors, fonts, fontSizes } from "./theme";
 import type { OutputEntry } from "./types";
+import { summarizeToolInput, formatToolResult } from "./outputUtils";
 
 export type { OutputEntry } from "./types";
+export { summarizeToolInput, formatToolResult } from "./outputUtils";
 
 type OutputPanelProps = {
   open: boolean;
@@ -14,48 +16,6 @@ type OutputPanelProps = {
   onClose: () => void;
   onPermissionRespond: (requestId: string, decision: "allow" | "allow-always" | "deny") => void;
 };
-
-// Summarize tool input into a short one-liner
-export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
-  switch (toolName) {
-    case "Read":
-    case "Write":
-      return String(input.file_path ?? "");
-    case "Edit":
-      return String(input.file_path ?? "");
-    case "Bash":
-      return String(input.command ?? "").slice(0, 120);
-    case "Grep":
-      return `/${input.pattern ?? ""}/ ${input.path ?? ""}`;
-    case "Glob":
-      return `${input.pattern ?? ""} ${input.path ?? ""}`;
-    case "Task":
-      return String(input.description ?? "");
-    default: {
-      const keys = Object.keys(input);
-      if (keys.length === 0) return "";
-      const first = input[keys[0]];
-      return typeof first === "string" ? first.slice(0, 100) : JSON.stringify(first)?.slice(0, 100) ?? "";
-    }
-  }
-}
-
-// Truncate tool result to a displayable string.
-// Tool result `content` from the Anthropic API can be a plain string
-// OR an array of content blocks like [{type:"text", text:"..."}].
-export function formatToolResult(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result === "string") return result;
-  if (Array.isArray(result)) {
-    const texts = result
-      .filter((b): b is { type: string; text: string } =>
-        typeof b === "object" && b !== null && b.type === "text" && typeof b.text === "string",
-      )
-      .map((b) => b.text);
-    if (texts.length > 0) return texts.join("\n");
-  }
-  return JSON.stringify(result, null, 2);
-}
 
 function SessionInitBlock({ entry }: { entry: Extract<OutputEntry, { kind: "session-init" }> }) {
   return (

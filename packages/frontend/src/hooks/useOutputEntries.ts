@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { OutputEntry } from "../types";
-import { summarizeToolInput, formatToolResult } from "../OutputPanel";
+import { summarizeToolInput, formatToolResult } from "../outputUtils";
 
 export function useOutputEntries() {
   const [outputEntries, setOutputEntries] = useState<OutputEntry[]>([]);
