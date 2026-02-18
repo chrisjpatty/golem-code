@@ -4,6 +4,7 @@ import { OrbitControls, Environment } from "@react-three/drei";
 import { EffectComposer, Pixelation, Noise, Vignette, Bloom } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import { GolemFace, type GolemFaceHandle } from "./GolemFace";
+import { SubagentFace, type ActiveSubagent, type SubagentPositions } from "./SubagentFace";
 import { DevPanel } from "./DevPanel";
 import { getRandomUnusedColor } from "./faceGen";
 import { VoiceButton } from "./VoiceButton";
@@ -27,6 +28,9 @@ export function App() {
   const usedColors = useRef(new Set<string>());
   const [panelOpen, setPanelOpen] = useState(false);
   const [outputEntries, setOutputEntries] = useState<OutputEntry[]>([]);
+  const [activeSubagents, setActiveSubagents] = useState<ActiveSubagent[]>([]);
+  const [removingSubagents, setRemovingSubagents] = useState<Set<string>>(new Set());
+  const subagentPositions = useRef<SubagentPositions>(new Map());
   const textBufferRef = useRef("");
   const thinkingBufferRef = useRef("");
   const rafRef = useRef<number>(0);
@@ -166,6 +170,27 @@ export function App() {
           // Flush streaming buffers
           flushTextBuffer();
           flushThinkingBuffer();
+          // Spawn subagent face for Task tool
+          if (event.toolName === "Task") {
+            setActiveSubagents((prev) => {
+              const used = new Set(prev.map((s) => s.color));
+              const sub: ActiveSubagent = {
+                toolUseId: event.toolUseId,
+                seed: Math.floor(Math.random() * 2 ** 32),
+                color: getRandomUnusedColor(used),
+                description: typeof event.input.description === "string" ? event.input.description : "",
+                freqX1: 0.15 + Math.random() * 0.15,
+                freqX2: 0.4 + Math.random() * 0.3,
+                freqY1: 0.12 + Math.random() * 0.15,
+                freqY2: 0.35 + Math.random() * 0.3,
+                phaseX1: Math.random() * Math.PI * 2,
+                phaseX2: Math.random() * Math.PI * 2,
+                phaseY1: Math.random() * Math.PI * 2,
+                phaseY2: Math.random() * Math.PI * 2,
+              };
+              return [...prev, sub];
+            });
+          }
           // Route Edit tool with old_string/new_string to a diff view
           if (
             event.toolName === "Edit" &&
@@ -194,6 +219,13 @@ export function App() {
           if (activeToolCount.current === 0) {
             faceRef.current?.stopEyeGlow();
           }
+          // Mark matching subagent as removing (pop-out animation)
+          setActiveSubagents((prev) => {
+            if (prev.some((s) => s.toolUseId === event.toolUseId)) {
+              setRemovingSubagents((rs) => new Set(rs).add(event.toolUseId));
+            }
+            return prev;
+          });
           // Add tool-result entry
           setOutputEntries((prev) => [
             ...prev,
@@ -218,6 +250,17 @@ export function App() {
         case "session:result":
           activeToolCount.current = 0;
           faceRef.current?.stopEyeGlow();
+          // Mark all remaining subagents as removing
+          setActiveSubagents((prev) => {
+            if (prev.length > 0) {
+              setRemovingSubagents((rs) => {
+                const next = new Set(rs);
+                for (const s of prev) next.add(s.toolUseId);
+                return next;
+              });
+            }
+            return prev;
+          });
           // Flush buffers, add session-result entry
           flushTextBuffer();
           flushThinkingBuffer();
@@ -236,6 +279,8 @@ export function App() {
         case "conversation:cleared":
           setPanelOpen(false);
           setOutputEntries([]);
+          setActiveSubagents([]);
+          setRemovingSubagents(new Set());
           textBufferRef.current = "";
           thinkingBufferRef.current = "";
           break;
@@ -284,6 +329,66 @@ export function App() {
     });
   }, []);
 
+  const handleSpawnSubagent = useCallback(() => {
+    setActiveSubagents((prev) => {
+      const used = new Set(prev.map((s) => s.color));
+      const sub: ActiveSubagent = {
+        toolUseId: `dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        seed: Math.floor(Math.random() * 2 ** 32),
+        color: getRandomUnusedColor(used),
+        description: "dev test",
+        freqX1: 0.15 + Math.random() * 0.15,
+        freqX2: 0.4 + Math.random() * 0.3,
+        freqY1: 0.12 + Math.random() * 0.15,
+        freqY2: 0.35 + Math.random() * 0.3,
+        phaseX1: Math.random() * Math.PI * 2,
+        phaseX2: Math.random() * Math.PI * 2,
+        phaseY1: Math.random() * Math.PI * 2,
+        phaseY2: Math.random() * Math.PI * 2,
+      };
+      return [...prev, sub];
+    });
+  }, []);
+
+  const handleRemoveSubagent = useCallback(() => {
+    setActiveSubagents((prev) => {
+      if (prev.length === 0) return prev;
+      const oldest = prev[0];
+      setRemovingSubagents((rs) => new Set(rs).add(oldest.toolUseId));
+      return prev;
+    });
+  }, []);
+
+  const handleRemoveAllSubagents = useCallback(() => {
+    setActiveSubagents((prev) => {
+      if (prev.length === 0) return prev;
+      setRemovingSubagents((rs) => {
+        const next = new Set(rs);
+        for (const s of prev) next.add(s.toolUseId);
+        return next;
+      });
+      return prev;
+    });
+  }, []);
+
+  const handleSubagentRemoved = useCallback((toolUseId: string) => {
+    setActiveSubagents((prev) => prev.filter((s) => s.toolUseId !== toolUseId));
+    setRemovingSubagents((prev) => {
+      const next = new Set(prev);
+      next.delete(toolUseId);
+      return next;
+    });
+  }, []);
+
+  // Scale subagent faces down when there are more than 6
+  const BASE_SCALE = 0.27;
+  const MIN_SCALE = 0.14;
+  const CROWD_THRESHOLD = 6;
+  const nonRemovingCount = activeSubagents.filter((s) => !removingSubagents.has(s.toolUseId)).length;
+  const subagentTargetScale = nonRemovingCount <= CROWD_THRESHOLD
+    ? BASE_SCALE
+    : Math.max(MIN_SCALE, BASE_SCALE * CROWD_THRESHOLD / nonRemovingCount);
+
   const { sendCommand, getSocket } = useGolemSocket({
     onEvent: handleEvent,
     onAudioChunk: feedAudioChunk,
@@ -318,6 +423,17 @@ export function App() {
         <Environment files="/studio_kominka_02_1k.hdr" background={false} environmentIntensity={3.0} environmentRotation={[(-15 * Math.PI) / 180, (-15 * Math.PI) / 180, 0]} />
         <directionalLight position={[0, -2, 3]} intensity={4} color="#ff6644" />
         <GolemFace ref={faceRef} slideLeft={panelOpen} seed={faceSeed} color={faceColor} />
+        {activeSubagents.map((sub) => (
+          <SubagentFace
+            key={sub.toolUseId}
+            subagent={sub}
+            panelOpen={panelOpen}
+            positions={subagentPositions}
+            targetScale={subagentTargetScale}
+            removing={removingSubagents.has(sub.toolUseId)}
+            onRemoved={() => handleSubagentRemoved(sub.toolUseId)}
+          />
+        ))}
         <OrbitControls enablePan={false} />
         <EffectComposer>
           <Pixelation granularity={10} />
@@ -342,6 +458,10 @@ export function App() {
           usedColors.current.clear();
           setFaceColor(undefined);
         }}
+        subagentCount={activeSubagents.length}
+        onSpawnSubagent={handleSpawnSubagent}
+        onRemoveSubagent={handleRemoveSubagent}
+        onRemoveAllSubagents={handleRemoveAllSubagents}
       />
       <OutputPanel open={panelOpen} entries={outputEntries} onClose={handleClosePanel} onPermissionRespond={handlePermissionRespond} />
       <VoiceButton

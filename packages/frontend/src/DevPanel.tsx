@@ -9,6 +9,10 @@ export function DevPanel({
   onResetFace,
   onRandomColor,
   onResetColor,
+  subagentCount,
+  onSpawnSubagent,
+  onRemoveSubagent,
+  onRemoveAllSubagents,
 }: {
   faceRef: React.RefObject<GolemFaceHandle | null>;
   onClearConversation: () => void;
@@ -18,6 +22,10 @@ export function DevPanel({
   onResetFace: () => void;
   onRandomColor: () => void;
   onResetColor: () => void;
+  subagentCount: number;
+  onSpawnSubagent: () => void;
+  onRemoveSubagent: () => void;
+  onRemoveAllSubagents: () => void;
 }) {
   return (
     <div
@@ -90,6 +98,10 @@ export function DevPanel({
       <Button label="Reset Face" onClick={onResetFace} />
       <Button label="Random Color" onClick={onRandomColor} />
       <Button label="Reset Color" onClick={onResetColor} />
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", margin: "4px 0" }} />
+      <Button label={`Spawn Subagent (${subagentCount})`} onClick={onSpawnSubagent} />
+      <Button label="Remove Subagent" onClick={onRemoveSubagent} />
+      <Button label="Remove All Subagents" onClick={onRemoveAllSubagents} />
     </div>
   );
 }
