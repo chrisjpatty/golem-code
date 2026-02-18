@@ -4,99 +4,35 @@ import { OrbitControls, Environment } from "@react-three/drei";
 import { EffectComposer, Pixelation, Noise, Vignette, Bloom } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import { GolemFace, type GolemFaceHandle } from "./GolemFace";
-import { SubagentFace, type ActiveSubagent, type SubagentPositions } from "./SubagentFace";
+import { SubagentFace } from "./SubagentFace";
 import { DevPanel } from "./DevPanel";
 import { getRandomUnusedColor } from "./faceGen";
 import { VoiceButton } from "./VoiceButton";
-import { OutputPanel, type OutputEntry, summarizeToolInput, formatToolResult } from "./OutputPanel";
+import { OutputPanel } from "./OutputPanel";
 import { useGolemSocket } from "./useGolemSocket";
 import { useVoiceCapture } from "./audio/useVoiceCapture";
 import { useAudioPlayback } from "./audio/useAudioPlayback";
+import { useStreamingBuffers } from "./hooks/useStreamingBuffers";
+import { useSubagentManager } from "./hooks/useSubagentManager";
+import { usePermissions } from "./hooks/usePermissions";
+import { useOutputEntries } from "./hooks/useOutputEntries";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
 
 export function App() {
   const faceRef = useRef<GolemFaceHandle>(null);
   const [transcript, setTranscript] = useState("");
-  const [autoApprove, setAutoApprove] = useState(true);
-  const autoApproveRef = useRef(true);
   const activeToolCount = useRef(0);
   const sendCommandRef = useRef<(cmd: GolemCommand) => void>(undefined);
 
-  // Output panel state
   const [faceSeed, setFaceSeed] = useState<number | undefined>(undefined);
   const [faceColor, setFaceColor] = useState<string | undefined>(undefined);
   const usedColors = useRef(new Set<string>());
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [outputEntries, setOutputEntries] = useState<OutputEntry[]>([]);
-  const [activeSubagents, setActiveSubagents] = useState<ActiveSubagent[]>([]);
-  const [removingSubagents, setRemovingSubagents] = useState<Set<string>>(new Set());
-  const subagentPositions = useRef<SubagentPositions>(new Map());
-  const textBufferRef = useRef("");
-  const thinkingBufferRef = useRef("");
-  const rafRef = useRef<number>(0);
 
-  // Flush accumulated text buffer into an entry
-  const flushTextBuffer = useCallback(() => {
-    if (textBufferRef.current) {
-      const text = textBufferRef.current;
-      textBufferRef.current = "";
-      setOutputEntries((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.kind === "text" && last.streaming) {
-          // Finalize the streaming entry with final accumulated text
-          return [...prev.slice(0, -1), { kind: "text", text: last.text + text, streaming: false }];
-        }
-        return [...prev, { kind: "text", text, streaming: false }];
-      });
-    }
-  }, []);
-
-  // Flush accumulated thinking buffer into an entry
-  const flushThinkingBuffer = useCallback(() => {
-    if (thinkingBufferRef.current) {
-      const text = thinkingBufferRef.current;
-      thinkingBufferRef.current = "";
-      setOutputEntries((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.kind === "thinking" && last.streaming) {
-          return [...prev.slice(0, -1), { kind: "thinking", text: last.text + text, streaming: false }];
-        }
-        return [...prev, { kind: "thinking", text, streaming: false }];
-      });
-    }
-  }, []);
-
-  // Schedule a rAF-throttled render of streaming buffers
-  const scheduleStreamRender = useCallback(() => {
-    if (rafRef.current) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = 0;
-      // Render current text buffer state
-      if (textBufferRef.current) {
-        const text = textBufferRef.current;
-        setOutputEntries((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.kind === "text" && last.streaming) {
-            return [...prev.slice(0, -1), { kind: "text", text: last.text + text, streaming: true }];
-          }
-          return [...prev, { kind: "text", text, streaming: true }];
-        });
-        textBufferRef.current = "";
-      }
-      // Render current thinking buffer state
-      if (thinkingBufferRef.current) {
-        const text = thinkingBufferRef.current;
-        setOutputEntries((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.kind === "thinking" && last.streaming) {
-            return [...prev.slice(0, -1), { kind: "thinking", text: last.text + text, streaming: true }];
-          }
-          return [...prev, { kind: "thinking", text, streaming: true }];
-        });
-        thinkingBufferRef.current = "";
-      }
-    });
-  }, []);
+  // Composed hooks
+  const entries = useOutputEntries();
+  const streaming = useStreamingBuffers(entries.setOutputEntries);
+  const permissions = usePermissions(sendCommandRef, entries.setOutputEntries);
+  const subagents = useSubagentManager();
 
   const { onTtsStart, feedAudioChunk, onTtsEnd } = useAudioPlayback({
     onPlaybackComplete: () => {
@@ -108,110 +44,42 @@ export function App() {
     (event: GolemEvent) => {
       switch (event.type) {
         case "session:init":
-          setPanelOpen(true);
-          textBufferRef.current = "";
-          thinkingBufferRef.current = "";
+          entries.openPanel();
+          streaming.resetBuffers();
           break;
 
         case "text:delta":
-          // Flush any pending thinking buffer first
-          flushThinkingBuffer();
-          textBufferRef.current += event.text;
-          scheduleStreamRender();
+          streaming.appendTextDelta(event.text);
           break;
 
         case "thinking:delta":
-          // Flush any pending text buffer first
-          flushTextBuffer();
-          thinkingBufferRef.current += event.text;
-          scheduleStreamRender();
+          streaming.appendThinkingDelta(event.text);
           break;
 
         case "stt:transcript":
           setTranscript(event.text);
           if (event.isFinal) {
-            setOutputEntries((prev) => [...prev, { kind: "user-message", text: event.text }]);
+            entries.addUserMessage(event.text);
             setTimeout(() => setTranscript(""), 3000);
           }
           break;
 
-        case "permission:request": {
-          const summary = summarizeToolInput(event.toolName, event.toolInput);
-          if (autoApproveRef.current) {
-            sendCommandRef.current?.({
-              type: "permission:response",
-              requestId: event.requestId,
-              decision: "allow",
-            });
-            setOutputEntries((prev) => [
-              ...prev,
-              { kind: "permission-request", requestId: event.requestId, toolName: event.toolName, summary, status: "approved" as const },
-            ]);
-          } else {
-            setOutputEntries((prev) => [
-              ...prev,
-              {
-                kind: "permission-request",
-                requestId: event.requestId,
-                toolName: event.toolName,
-                summary,
-                status: "pending" as const,
-                decisionReason: event.decisionReason,
-                suggestions: event.suggestions,
-              },
-            ]);
-          }
+        case "permission:request":
+          permissions.handlePermissionRequest(event);
           break;
-        }
 
         case "tool:start":
           activeToolCount.current++;
           faceRef.current?.startEyeGlow();
-          // Flush streaming buffers
-          flushTextBuffer();
-          flushThinkingBuffer();
-          // Spawn subagent face for Task tool
+          streaming.flushTextBuffer();
+          streaming.flushThinkingBuffer();
           if (event.toolName === "Task") {
-            setActiveSubagents((prev) => {
-              const used = new Set(prev.map((s) => s.color));
-              const sub: ActiveSubagent = {
-                toolUseId: event.toolUseId,
-                seed: Math.floor(Math.random() * 2 ** 32),
-                color: getRandomUnusedColor(used),
-                description: typeof event.input.description === "string" ? event.input.description : "",
-                freqX1: 0.15 + Math.random() * 0.15,
-                freqX2: 0.4 + Math.random() * 0.3,
-                freqY1: 0.12 + Math.random() * 0.15,
-                freqY2: 0.35 + Math.random() * 0.3,
-                phaseX1: Math.random() * Math.PI * 2,
-                phaseX2: Math.random() * Math.PI * 2,
-                phaseY1: Math.random() * Math.PI * 2,
-                phaseY2: Math.random() * Math.PI * 2,
-              };
-              return [...prev, sub];
-            });
+            subagents.spawnSubagent(
+              event.toolUseId,
+              typeof event.input.description === "string" ? event.input.description : "",
+            );
           }
-          // Route Edit tool with old_string/new_string to a diff view
-          if (
-            event.toolName === "Edit" &&
-            typeof event.input.old_string === "string" &&
-            typeof event.input.new_string === "string"
-          ) {
-            setOutputEntries((prev) => [
-              ...prev,
-              {
-                kind: "edit-diff",
-                filePath: String(event.input.file_path ?? ""),
-                oldString: event.input.old_string as string,
-                newString: event.input.new_string as string,
-              },
-            ]);
-          } else {
-            setOutputEntries((prev) => [
-              ...prev,
-              { kind: "tool-start", toolName: event.toolName, summary: summarizeToolInput(event.toolName, event.input) },
-            ]);
-          }
+          entries.addToolStart(event.toolName, event.input);
           break;
 
         case "tool:result":
@@ -219,70 +87,31 @@ export function App() {
           if (activeToolCount.current === 0) {
             faceRef.current?.stopEyeGlow();
           }
-          // Mark matching subagent as removing (pop-out animation)
-          setActiveSubagents((prev) => {
-            if (prev.some((s) => s.toolUseId === event.toolUseId)) {
-              setRemovingSubagents((rs) => new Set(rs).add(event.toolUseId));
-            }
-            return prev;
-          });
-          // Add tool-result entry
-          setOutputEntries((prev) => [
-            ...prev,
-            { kind: "tool-result", text: formatToolResult(event.result) },
-          ]);
+          subagents.markRemoving(event.toolUseId);
+          entries.addToolResult(event.result);
           break;
 
         case "tool:summary":
-          setOutputEntries((prev) => [
-            ...prev,
-            { kind: "tool-summary", summary: event.summary },
-          ]);
+          entries.addToolSummary(event.summary);
           break;
 
         case "status:update":
-          setOutputEntries((prev) => [
-            ...prev,
-            { kind: "status-update", status: event.status },
-          ]);
+          entries.addStatusUpdate(event.status);
           break;
 
         case "session:result":
           activeToolCount.current = 0;
           faceRef.current?.stopEyeGlow();
-          // Mark all remaining subagents as removing
-          setActiveSubagents((prev) => {
-            if (prev.length > 0) {
-              setRemovingSubagents((rs) => {
-                const next = new Set(rs);
-                for (const s of prev) next.add(s.toolUseId);
-                return next;
-              });
-            }
-            return prev;
-          });
-          // Flush buffers, add session-result entry
-          flushTextBuffer();
-          flushThinkingBuffer();
-          setOutputEntries((prev) => [
-            ...prev,
-            {
-              kind: "session-result",
-              cost: event.totalCostUsd,
-              inputTokens: event.inputTokens,
-              outputTokens: event.outputTokens,
-              durationMs: event.durationMs,
-            },
-          ]);
+          subagents.markAllRemoving();
+          streaming.flushTextBuffer();
+          streaming.flushThinkingBuffer();
+          entries.addSessionResult(event);
           break;
 
         case "conversation:cleared":
-          setPanelOpen(false);
-          setOutputEntries([]);
-          setActiveSubagents([]);
-          setRemovingSubagents(new Set());
-          textBufferRef.current = "";
-          thinkingBufferRef.current = "";
+          entries.clearAll();
+          subagents.clearAll();
+          streaming.resetBuffers();
           break;
 
         case "tts:start":
@@ -295,109 +124,14 @@ export function App() {
           break;
       }
     },
-    [onTtsStart, onTtsEnd, flushTextBuffer, flushThinkingBuffer, scheduleStreamRender],
+    [onTtsStart, onTtsEnd, streaming, entries, permissions, subagents],
   );
-
-  const handlePermissionRespond = useCallback(
-    (requestId: string, decision: "allow" | "allow-always" | "deny") => {
-      sendCommandRef.current?.({
-        type: "permission:response",
-        requestId,
-        decision,
-      });
-      const statusMap = {
-        "allow": "approved" as const,
-        "allow-always": "always-approved" as const,
-        "deny": "denied" as const,
-      };
-      setOutputEntries((prev) =>
-        prev.map((entry) =>
-          entry.kind === "permission-request" && entry.requestId === requestId
-            ? { ...entry, status: statusMap[decision] }
-            : entry,
-        ),
-      );
-    },
-    [],
-  );
-
-  const handleToggleAutoApprove = useCallback(() => {
-    setAutoApprove((prev) => {
-      const next = !prev;
-      autoApproveRef.current = next;
-      return next;
-    });
-  }, []);
-
-  const handleSpawnSubagent = useCallback(() => {
-    setActiveSubagents((prev) => {
-      const used = new Set(prev.map((s) => s.color));
-      const sub: ActiveSubagent = {
-        toolUseId: `dev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        seed: Math.floor(Math.random() * 2 ** 32),
-        color: getRandomUnusedColor(used),
-        description: "dev test",
-        freqX1: 0.15 + Math.random() * 0.15,
-        freqX2: 0.4 + Math.random() * 0.3,
-        freqY1: 0.12 + Math.random() * 0.15,
-        freqY2: 0.35 + Math.random() * 0.3,
-        phaseX1: Math.random() * Math.PI * 2,
-        phaseX2: Math.random() * Math.PI * 2,
-        phaseY1: Math.random() * Math.PI * 2,
-        phaseY2: Math.random() * Math.PI * 2,
-      };
-      return [...prev, sub];
-    });
-  }, []);
-
-  const handleRemoveSubagent = useCallback(() => {
-    setActiveSubagents((prev) => {
-      if (prev.length === 0) return prev;
-      const oldest = prev[0];
-      setRemovingSubagents((rs) => new Set(rs).add(oldest.toolUseId));
-      return prev;
-    });
-  }, []);
-
-  const handleRemoveAllSubagents = useCallback(() => {
-    setActiveSubagents((prev) => {
-      if (prev.length === 0) return prev;
-      setRemovingSubagents((rs) => {
-        const next = new Set(rs);
-        for (const s of prev) next.add(s.toolUseId);
-        return next;
-      });
-      return prev;
-    });
-  }, []);
-
-  const handleSubagentRemoved = useCallback((toolUseId: string) => {
-    setActiveSubagents((prev) => prev.filter((s) => s.toolUseId !== toolUseId));
-    setRemovingSubagents((prev) => {
-      const next = new Set(prev);
-      next.delete(toolUseId);
-      return next;
-    });
-  }, []);
-
-  // Scale subagent faces down when there are more than 6
-  const BASE_SCALE = 0.27;
-  const MIN_SCALE = 0.14;
-  const CROWD_THRESHOLD = 6;
-  const nonRemovingCount = activeSubagents.filter((s) => !removingSubagents.has(s.toolUseId)).length;
-  const subagentTargetScale = nonRemovingCount <= CROWD_THRESHOLD
-    ? BASE_SCALE
-    : Math.max(MIN_SCALE, BASE_SCALE * CROWD_THRESHOLD / nonRemovingCount);
 
   const { sendCommand, getSocket } = useGolemSocket({
     onEvent: handleEvent,
     onAudioChunk: feedAudioChunk,
   });
   sendCommandRef.current = sendCommand;
-
-  const handleClosePanel = useCallback(() => {
-    setPanelOpen(false);
-  }, []);
 
   const { startRecording, stopRecording } = useVoiceCapture({ getSocket });
 
@@ -422,16 +156,16 @@ export function App() {
         <fog attach="fog" args={["#1a0a0a", 8, 20]} />
         <Environment files="/studio_kominka_02_1k.hdr" background={false} environmentIntensity={3.0} environmentRotation={[(-15 * Math.PI) / 180, (-15 * Math.PI) / 180, 0]} />
         <directionalLight position={[0, -2, 3]} intensity={4} color="#ff6644" />
-        <GolemFace ref={faceRef} slideLeft={panelOpen} seed={faceSeed} color={faceColor} />
-        {activeSubagents.map((sub) => (
+        <GolemFace ref={faceRef} slideLeft={entries.panelOpen} seed={faceSeed} color={faceColor} />
+        {subagents.activeSubagents.map((sub) => (
           <SubagentFace
             key={sub.toolUseId}
             subagent={sub}
-            panelOpen={panelOpen}
-            positions={subagentPositions}
-            targetScale={subagentTargetScale}
-            removing={removingSubagents.has(sub.toolUseId)}
-            onRemoved={() => handleSubagentRemoved(sub.toolUseId)}
+            panelOpen={entries.panelOpen}
+            positions={subagents.subagentPositions}
+            targetScale={subagents.targetScale}
+            removing={subagents.removingSubagents.has(sub.toolUseId)}
+            onRemoved={() => subagents.onSubagentRemoved(sub.toolUseId)}
           />
         ))}
         <OrbitControls enablePan={false} />
@@ -445,8 +179,8 @@ export function App() {
       <DevPanel
         faceRef={faceRef}
         onClearConversation={() => sendCommand({ type: "conversation:clear" })}
-        autoApprove={autoApprove}
-        onToggleAutoApprove={handleToggleAutoApprove}
+        autoApprove={permissions.autoApprove}
+        onToggleAutoApprove={permissions.toggleAutoApprove}
         onRandomFace={() => setFaceSeed(Math.floor(Math.random() * 2 ** 32))}
         onResetFace={() => setFaceSeed(undefined)}
         onRandomColor={() => {
@@ -458,17 +192,22 @@ export function App() {
           usedColors.current.clear();
           setFaceColor(undefined);
         }}
-        subagentCount={activeSubagents.length}
-        onSpawnSubagent={handleSpawnSubagent}
-        onRemoveSubagent={handleRemoveSubagent}
-        onRemoveAllSubagents={handleRemoveAllSubagents}
+        subagentCount={subagents.activeSubagents.length}
+        onSpawnSubagent={subagents.devSpawn}
+        onRemoveSubagent={subagents.devRemoveOldest}
+        onRemoveAllSubagents={subagents.markAllRemoving}
       />
-      <OutputPanel open={panelOpen} entries={outputEntries} onClose={handleClosePanel} onPermissionRespond={handlePermissionRespond} />
+      <OutputPanel
+        open={entries.panelOpen}
+        entries={entries.outputEntries}
+        onClose={entries.closePanel}
+        onPermissionRespond={permissions.handlePermissionRespond}
+      />
       <VoiceButton
         onPressStart={handleVoiceStart}
         onPressEnd={handleVoiceEnd}
         transcript={transcript}
-        panelOpen={panelOpen}
+        panelOpen={entries.panelOpen}
       />
     </>
   );

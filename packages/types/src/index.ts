@@ -3,6 +3,13 @@
  * designed for visualization in the 3D frontend.
  */
 
+// -- Binary protocol headers (WebSocket binary frames) --
+
+/** client → server: Int16LE PCM microphone audio */
+export const HEADER_MIC_AUDIO = 0x01;
+/** server → client: Float32LE PCM TTS audio */
+export const HEADER_TTS_AUDIO = 0x02;
+
 // -- Session lifecycle --
 
 export type GolemSessionInit = {

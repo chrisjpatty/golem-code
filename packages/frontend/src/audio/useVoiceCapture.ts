@@ -1,7 +1,7 @@
 import { useRef, useCallback } from "react";
+import { HEADER_MIC_AUDIO } from "@golem-code/types";
 
 const TARGET_SAMPLE_RATE = 16000;
-const HEADER_MIC_AUDIO = 0x01;
 
 type UseVoiceCaptureOptions = {
   getSocket: () => WebSocket | null;

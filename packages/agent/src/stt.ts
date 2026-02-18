@@ -6,13 +6,17 @@ const MODEL_PATH = resolve(MODELS_ROOT, "stt/ggml-large-v3-turbo.bin");
 
 let ctx: WhisperContext | null = null;
 
-// Eagerly load model at startup
+// Eagerly load model at startup (non-fatal if missing)
 const loadStart = performance.now();
 console.log("[stt] Loading whisper model...");
-initWhisper({ filePath: MODEL_PATH, useGpu: true }).then((c) => {
-  ctx = c;
-  console.log(`[stt] Whisper model loaded in ${(performance.now() - loadStart).toFixed(0)}ms`);
-});
+initWhisper({ filePath: MODEL_PATH, useGpu: true })
+  .then((c) => {
+    ctx = c;
+    console.log(`[stt] Whisper model loaded in ${(performance.now() - loadStart).toFixed(0)}ms`);
+  })
+  .catch((err) => {
+    console.warn(`[stt] Whisper model unavailable: ${err instanceof Error ? err.message : err}`);
+  });
 
 // Session state: buffer audio chunks during push-to-talk
 let audioChunks: Int16Array[] = [];

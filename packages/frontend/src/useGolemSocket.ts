@@ -1,7 +1,11 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
+import { HEADER_TTS_AUDIO } from "@golem-code/types";
 
-const HEADER_TTS_AUDIO = 0x02;
+const DEFAULT_WS_URL =
+  (import.meta as any).env?.VITE_GOLEM_WS_URL ?? "ws://localhost:4747/ws";
+
+export type ConnectionState = "connecting" | "connected" | "disconnected";
 
 type UseGolemSocketOptions = {
   url?: string;
@@ -9,63 +13,88 @@ type UseGolemSocketOptions = {
   onAudioChunk?: (float32: Float32Array) => void;
 };
 
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 16000;
+
 export function useGolemSocket({
-  url = "ws://localhost:4747/ws",
+  url = DEFAULT_WS_URL,
   onEvent,
   onAudioChunk,
 }: UseGolemSocketOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const onEventRef = useRef(onEvent);
   const onAudioChunkRef = useRef(onAudioChunk);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
 
   // Keep refs in sync without triggering reconnects
   onEventRef.current = onEvent;
   onAudioChunkRef.current = onAudioChunk;
 
   useEffect(() => {
-    const ws = new WebSocket(url);
-    ws.binaryType = "arraybuffer";
-    wsRef.current = ws;
+    let disposed = false;
+    let reconnectDelay = RECONNECT_BASE_MS;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    ws.onopen = () => {
-      console.log("[golem-ws] Connected");
-    };
+    function connect() {
+      if (disposed) return;
+      setConnectionState("connecting");
 
-    ws.onmessage = (e: MessageEvent) => {
-      if (e.data instanceof ArrayBuffer) {
-        const view = new Uint8Array(e.data);
-        if (view.length < 2) return;
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
 
-        if (view[0] === HEADER_TTS_AUDIO) {
-          // Extract Float32 audio after the 1-byte header
-          // Need to handle potential alignment issues
-          const audioBytes = e.data.slice(1);
-          const float32 = new Float32Array(audioBytes);
-          onAudioChunkRef.current?.(float32);
+      ws.onopen = () => {
+        if (disposed) { ws.close(); return; }
+        console.log("[golem-ws] Connected");
+        setConnectionState("connected");
+        reconnectDelay = RECONNECT_BASE_MS;
+      };
+
+      ws.onmessage = (e: MessageEvent) => {
+        if (e.data instanceof ArrayBuffer) {
+          const view = new Uint8Array(e.data);
+          if (view.length < 2) return;
+
+          if (view[0] === HEADER_TTS_AUDIO) {
+            const audioBytes = e.data.slice(1);
+            const float32 = new Float32Array(audioBytes);
+            onAudioChunkRef.current?.(float32);
+          }
+          return;
         }
-        return;
-      }
 
-      // String message — JSON GolemEvent
-      try {
-        const event = JSON.parse(e.data) as GolemEvent;
-        onEventRef.current?.(event);
-      } catch {
-        console.warn("[golem-ws] Invalid event:", e.data);
-      }
-    };
+        // String message — JSON GolemEvent
+        try {
+          const event = JSON.parse(e.data) as GolemEvent;
+          onEventRef.current?.(event);
+        } catch {
+          console.warn("[golem-ws] Invalid event:", e.data);
+        }
+      };
 
-    ws.onclose = () => {
-      console.log("[golem-ws] Disconnected");
-      wsRef.current = null;
-    };
+      ws.onclose = () => {
+        wsRef.current = null;
+        if (disposed) return;
+        setConnectionState("disconnected");
+        console.log(`[golem-ws] Disconnected, reconnecting in ${reconnectDelay}ms`);
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+          connect();
+        }, reconnectDelay);
+      };
 
-    ws.onerror = (err) => {
-      console.error("[golem-ws] Error:", err);
-    };
+      ws.onerror = (err) => {
+        console.error("[golem-ws] Error:", err);
+      };
+    }
+
+    connect();
 
     return () => {
-      ws.close();
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      wsRef.current?.close();
       wsRef.current = null;
     };
   }, [url]);
@@ -79,5 +108,5 @@ export function useGolemSocket({
 
   const getSocket = useCallback(() => wsRef.current, []);
 
-  return { sendCommand, getSocket };
+  return { sendCommand, getSocket, connectionState };
 }
