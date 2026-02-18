@@ -3,21 +3,10 @@ import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeLineDiff, type DiffLine } from "./diff";
+import { colors, fonts, fontSizes } from "./theme";
+import type { OutputEntry } from "./types";
 
-// -- Entry types --
-
-export type OutputEntry =
-  | { kind: "session-init"; model: string; cwd: string }
-  | { kind: "user-message"; text: string }
-  | { kind: "text"; text: string; streaming: boolean }
-  | { kind: "thinking"; text: string; streaming: boolean }
-  | { kind: "tool-start"; toolName: string; summary: string }
-  | { kind: "edit-diff"; filePath: string; oldString: string; newString: string }
-  | { kind: "tool-result"; text: string }
-  | { kind: "permission-request"; requestId: string; toolName: string; summary: string; status: "pending" | "approved" | "always-approved" | "denied"; decisionReason?: string; suggestions?: Array<{ update: unknown; label: string }> }
-  | { kind: "tool-summary"; summary: string }
-  | { kind: "status-update"; status: "compacting" | null }
-  | { kind: "session-result"; cost: number; inputTokens: number; outputTokens: number; durationMs: number };
+export type { OutputEntry } from "./types";
 
 type OutputPanelProps = {
   open: boolean;
@@ -70,16 +59,16 @@ export function formatToolResult(result: unknown): string {
 
 function SessionInitBlock({ entry }: { entry: Extract<OutputEntry, { kind: "session-init" }> }) {
   return (
-    <div style={{ color: "#666", fontSize: 11, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-      <span style={{ color: "#888" }}>model:</span> {entry.model} &nbsp;
-      <span style={{ color: "#888" }}>cwd:</span> {entry.cwd}
+    <div style={{ color: colors.textFaint, fontSize: 11, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+      <span style={{ color: colors.textDim }}>model:</span> {entry.model} &nbsp;
+      <span style={{ color: colors.textDim }}>cwd:</span> {entry.cwd}
     </div>
   );
 }
 
 function UserMessageBlock({ entry }: { entry: Extract<OutputEntry, { kind: "user-message" }> }) {
   return (
-    <div style={{ color: "#ff6644", fontSize: 13, fontFamily: "monospace", padding: "10px 0 6px", marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+    <div style={{ color: colors.accent, fontSize: 13, fontFamily: fonts.mono, padding: "10px 0 6px", marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
       &gt; {entry.text}
     </div>
   );
@@ -98,10 +87,10 @@ function mdComponents(color: string): Components {
       <h2 style={{ color: "#eee", fontSize: 16, margin: "0.9em 0 0.4em" }}>{children}</h2>
     ),
     h3: ({ children }) => (
-      <h3 style={{ color: "#ddd", fontSize: 14, margin: "0.8em 0 0.3em" }}>{children}</h3>
+      <h3 style={{ color: colors.text, fontSize: 14, margin: "0.8em 0 0.3em" }}>{children}</h3>
     ),
     h4: ({ children }) => (
-      <h4 style={{ color: "#ddd", fontSize: 13, margin: "0.7em 0 0.3em" }}>{children}</h4>
+      <h4 style={{ color: colors.text, fontSize: 13, margin: "0.7em 0 0.3em" }}>{children}</h4>
     ),
     pre: ({ children }) => (
       <pre style={{ background: "rgba(0,0,0,0.4)", padding: "10px 12px", borderRadius: 4, overflowX: "auto", margin: "0.8em 0" }}>
@@ -112,13 +101,13 @@ function mdComponents(color: string): Components {
       const isBlock = !!className || false;
       if (isBlock) {
         return (
-          <code style={{ color: "#ccc", fontFamily: "monospace", fontSize: 12, lineHeight: 1.5 }}>
+          <code style={{ color: "#ccc", fontFamily: fonts.mono, fontSize: 12, lineHeight: 1.5 }}>
             {children}
           </code>
         );
       }
       return (
-        <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 3, fontFamily: "monospace", fontSize: "0.9em", color }}>
+        <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 3, fontFamily: fonts.mono, fontSize: "0.9em", color }}>
           {children}
         </code>
       );
@@ -133,7 +122,7 @@ function mdComponents(color: string): Components {
       <li style={{ color, marginBottom: 4, lineHeight: 1.6 }}>{children}</li>
     ),
     a: ({ children, href }) => (
-      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "#ff6644" }}>
+      <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: colors.accent }}>
         {children}
       </a>
     ),
@@ -147,7 +136,7 @@ const thinkingMdComponents = mdComponents("#555");
 
 function TextBlock({ entry }: { entry: Extract<OutputEntry, { kind: "text" }> }) {
   return (
-    <div style={{ color: "#ddd", fontFamily: "monospace", fontSize: 13, padding: "6px 0", lineHeight: 1.5 }}>
+    <div style={{ color: colors.text, fontFamily: fonts.mono, fontSize: 13, padding: "6px 0", lineHeight: 1.5 }}>
       <Markdown components={textMdComponents}>{entry.text}</Markdown>
     </div>
   );
@@ -163,9 +152,9 @@ function ThinkingBlock({ entry }: { entry: Extract<OutputEntry, { kind: "thinkin
         style={{
           background: "none",
           border: "none",
-          color: "#555",
+          color: colors.textFaintest,
           cursor: "pointer",
-          fontFamily: "monospace",
+          fontFamily: fonts.mono,
           fontSize: 11,
           padding: 0,
         }}
@@ -173,7 +162,7 @@ function ThinkingBlock({ entry }: { entry: Extract<OutputEntry, { kind: "thinkin
         {expanded ? "▼" : "▶"} thinking...
       </button>
       {expanded && (
-        <div style={{ color: "#555", fontFamily: "monospace", fontSize: 12, padding: "4px 0 4px 12px", lineHeight: 1.4 }}>
+        <div style={{ color: colors.textFaintest, fontFamily: fonts.mono, fontSize: 12, padding: "4px 0 4px 12px", lineHeight: 1.4 }}>
           <Markdown components={thinkingMdComponents}>{entry.text}</Markdown>
         </div>
       )}
@@ -185,14 +174,14 @@ function ToolStartBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool-s
   return (
     <div
       style={{
-        borderLeft: "3px solid #ff6644",
+        borderLeft: `3px solid ${colors.accent}`,
         padding: "6px 0 6px 10px",
         margin: "4px 0",
       }}
     >
-      <span style={{ color: "#ff6644", fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
+      <span style={{ color: colors.accent, fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
       {entry.summary && (
-        <div style={{ color: "#999", fontSize: 11, fontFamily: "monospace", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: colors.textMuted, fontSize: 11, fontFamily: fonts.mono, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {entry.summary}
         </div>
       )}
@@ -219,11 +208,11 @@ function EditDiffBlock({ entry }: { entry: Extract<OutputEntry, { kind: "edit-di
           width: "100%",
         }}
       >
-        <span style={{ color: "#ff6644", fontWeight: "bold", fontSize: 12 }}>Edit</span>
-        <span style={{ color: "#999", fontSize: 11, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span style={{ color: colors.accent, fontWeight: "bold", fontSize: 12 }}>Edit</span>
+        <span style={{ color: colors.textMuted, fontSize: 11, fontFamily: fonts.mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {entry.filePath}
         </span>
-        <span style={{ color: "#666", fontSize: 10, marginLeft: "auto", flexShrink: 0 }}>
+        <span style={{ color: colors.textFaint, fontSize: 10, marginLeft: "auto", flexShrink: 0 }}>
           {expanded ? "▼" : "▶"}
         </span>
       </button>
@@ -234,7 +223,7 @@ function EditDiffBlock({ entry }: { entry: Extract<OutputEntry, { kind: "edit-di
           overflow: "hidden",
           border: "1px solid rgba(255,255,255,0.08)",
           fontSize: 12,
-          fontFamily: "monospace",
+          fontFamily: fonts.mono,
           lineHeight: 1.5,
         }}>
           {diffLines.map((line, i) => (
@@ -252,7 +241,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
       <div style={{
         padding: "2px 8px",
         background: "rgba(255,255,255,0.03)",
-        color: "#555",
+        color: colors.textFaintest,
         fontSize: 11,
         fontStyle: "italic",
         textAlign: "center",
@@ -263,9 +252,9 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   }
 
   const styles: Record<string, { bg: string; color: string; prefix: string }> = {
-    add: { bg: "rgba(40, 160, 60, 0.15)", color: "#6c6", prefix: "+" },
-    remove: { bg: "rgba(200, 50, 50, 0.15)", color: "#c66", prefix: "-" },
-    context: { bg: "transparent", color: "#888", prefix: " " },
+    add: { bg: colors.diffAdd, color: colors.diffAddText, prefix: "+" },
+    remove: { bg: colors.diffRemove, color: colors.diffRemoveText, prefix: "-" },
+    context: { bg: "transparent", color: colors.textDim, prefix: " " },
   };
   const s = styles[line.type];
 
@@ -291,13 +280,13 @@ function ToolResultBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool-
 
   return (
     <div style={{ padding: "2px 0 6px 13px", borderLeft: "3px solid rgba(255,102,68,0.2)" }}>
-      <pre style={{ color: "#777", fontSize: 11, fontFamily: "monospace", margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.3, maxHeight: expanded ? "none" : 180, overflow: "hidden" }}>
+      <pre style={{ color: "#777", fontSize: 11, fontFamily: fonts.mono, margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.3, maxHeight: expanded ? "none" : 180, overflow: "hidden" }}>
         {displayText}
       </pre>
       {truncated && !expanded && (
         <button
           onClick={() => setExpanded(true)}
-          style={{ background: "none", border: "none", color: "#ff6644", cursor: "pointer", fontFamily: "monospace", fontSize: 11, padding: "4px 0 0 0" }}
+          style={{ background: "none", border: "none", color: colors.accent, cursor: "pointer", fontFamily: fonts.mono, fontSize: 11, padding: "4px 0 0 0" }}
         >
           Show more ({lines.length - 10} lines)
         </button>
@@ -313,13 +302,13 @@ function PermissionResolvedBlock({
 }) {
   if (entry.status === "approved" || entry.status === "always-approved") {
     return (
-      <div style={{ borderLeft: "3px solid #ff6644", padding: "6px 0 6px 10px", margin: "4px 0" }}>
-        <span style={{ color: "#ff6644", fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
-        <span style={{ color: "#4a4", fontSize: 11, marginLeft: 8 }}>
+      <div style={{ borderLeft: `3px solid ${colors.accent}`, padding: "6px 0 6px 10px", margin: "4px 0" }}>
+        <span style={{ color: colors.accent, fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
+        <span style={{ color: colors.success, fontSize: 11, marginLeft: 8 }}>
           &#10003; {entry.status === "always-approved" ? "always allowed" : "approved"}
         </span>
         {entry.summary && (
-          <div style={{ color: "#999", fontSize: 11, fontFamily: "monospace", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ color: colors.textMuted, fontSize: 11, fontFamily: fonts.mono, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {entry.summary}
           </div>
         )}
@@ -330,10 +319,10 @@ function PermissionResolvedBlock({
   if (entry.status === "denied") {
     return (
       <div style={{ borderLeft: "3px solid rgba(255,102,68,0.3)", padding: "6px 0 6px 10px", margin: "4px 0", opacity: 0.6 }}>
-        <span style={{ color: "#888", fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
-        <span style={{ color: "#c44", fontSize: 11, marginLeft: 8 }}>&#10007; denied</span>
+        <span style={{ color: colors.textDim, fontWeight: "bold", fontSize: 12 }}>{entry.toolName}</span>
+        <span style={{ color: colors.error, fontSize: 11, marginLeft: 8 }}>&#10007; denied</span>
         {entry.summary && (
-          <div style={{ color: "#666", fontSize: 11, fontFamily: "monospace", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ color: colors.textFaint, fontSize: 11, fontFamily: fonts.mono, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {entry.summary}
           </div>
         )}
@@ -357,22 +346,22 @@ function PermissionFooter({
   return (
     <div style={{
       flexShrink: 0,
-      borderTop: "1px solid rgba(255,255,255,0.06)",
+      borderTop: `1px solid ${colors.border}`,
       padding: "10px 16px",
-      background: "rgba(10, 10, 10, 0.95)",
+      background: colors.panelBgSolid,
     }}>
-      <div style={{ borderLeft: "3px solid #ff6644", padding: "8px 0 8px 10px" }}>
-        <div style={{ fontSize: 12, fontWeight: "bold", color: "#ff6644", marginBottom: 4 }}>
+      <div style={{ borderLeft: `3px solid ${colors.accent}`, padding: "8px 0 8px 10px" }}>
+        <div style={{ fontSize: 12, fontWeight: "bold", color: colors.accent, marginBottom: 4 }}>
           Tool Approval
           {queuedCount > 0 && (
-            <span style={{ color: "#999", fontWeight: "normal", marginLeft: 8 }}>
+            <span style={{ color: colors.textMuted, fontWeight: "normal", marginLeft: 8 }}>
               +{queuedCount} queued
             </span>
           )}
         </div>
         <div style={{ fontSize: 13, color: "#fff", marginBottom: 4 }}>{entry.toolName}</div>
         {entry.decisionReason && (
-          <div style={{ fontSize: 11, color: "#888", fontStyle: "italic", marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: colors.textDim, fontStyle: "italic", marginBottom: 6 }}>
             {entry.decisionReason}
           </div>
         )}
@@ -381,7 +370,7 @@ function PermissionFooter({
             fontSize: 12,
             color: "#aaa",
             background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.1)",
+            border: `1px solid ${colors.borderLight}`,
             borderRadius: 4,
             padding: "6px 8px",
             marginBottom: 8,
@@ -389,7 +378,7 @@ function PermissionFooter({
             overflow: "auto",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            fontFamily: "monospace",
+            fontFamily: fonts.mono,
           }}>
             {entry.summary}
           </div>
@@ -401,9 +390,9 @@ function PermissionFooter({
               padding: "5px 14px",
               border: "none",
               borderRadius: 4,
-              background: "#ff6644",
+              background: colors.accent,
               color: "#fff",
-              fontFamily: "monospace",
+              fontFamily: fonts.mono,
               fontSize: 12,
               fontWeight: "bold",
               cursor: "pointer",
@@ -416,11 +405,11 @@ function PermissionFooter({
               onClick={() => onRespond(entry.requestId, "allow-always")}
               style={{
                 padding: "5px 14px",
-                border: "1px solid #ff6644",
+                border: `1px solid ${colors.accent}`,
                 borderRadius: 4,
                 background: "transparent",
-                color: "#ff6644",
-                fontFamily: "monospace",
+                color: colors.accent,
+                fontFamily: fonts.mono,
                 fontSize: 12,
                 fontWeight: "bold",
                 cursor: "pointer",
@@ -433,11 +422,11 @@ function PermissionFooter({
             onClick={() => onRespond(entry.requestId, "deny")}
             style={{
               padding: "5px 14px",
-              border: "1px solid rgba(255,255,255,0.15)",
+              border: `1px solid ${colors.borderMedium}`,
               borderRadius: 4,
               background: "rgba(255,255,255,0.08)",
               color: "#ccc",
-              fontFamily: "monospace",
+              fontFamily: fonts.mono,
               fontSize: 12,
               cursor: "pointer",
             }}
@@ -448,7 +437,7 @@ function PermissionFooter({
         {entry.suggestions && entry.suggestions.length > 0 && (
           <div style={{ marginTop: 6 }}>
             {entry.suggestions.map((s, i) => (
-              <div key={i} style={{ fontSize: 10, color: "#666", fontFamily: "monospace" }}>
+              <div key={i} style={{ fontSize: 10, color: colors.textFaint, fontFamily: fonts.mono }}>
                 {s.label}
               </div>
             ))}
@@ -461,7 +450,7 @@ function PermissionFooter({
 
 function ToolSummaryBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool-summary" }> }) {
   return (
-    <div style={{ color: "#888", fontSize: 11, fontFamily: "monospace", padding: "4px 0 4px 13px", borderLeft: "3px solid rgba(255,102,68,0.15)", margin: "4px 0", fontStyle: "italic" }}>
+    <div style={{ color: colors.textDim, fontSize: 11, fontFamily: fonts.mono, padding: "4px 0 4px 13px", borderLeft: "3px solid rgba(255,102,68,0.15)", margin: "4px 0", fontStyle: "italic" }}>
       {entry.summary}
     </div>
   );
@@ -470,8 +459,8 @@ function ToolSummaryBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool
 function StatusUpdateBlock({ entry }: { entry: Extract<OutputEntry, { kind: "status-update" }> }) {
   if (entry.status === null) return null;
   return (
-    <div style={{ color: "#666", fontSize: 11, padding: "6px 0", fontFamily: "monospace" }}>
-      <span style={{ color: "#ff6644" }}>...</span> {entry.status === "compacting" ? "compacting context" : entry.status}
+    <div style={{ color: colors.textFaint, fontSize: 11, padding: "6px 0", fontFamily: fonts.mono }}>
+      <span style={{ color: colors.accent }}>...</span> {entry.status === "compacting" ? "compacting context" : entry.status}
     </div>
   );
 }
@@ -480,10 +469,10 @@ function SessionResultBlock({ entry }: { entry: Extract<OutputEntry, { kind: "se
   const duration = (entry.durationMs / 1000).toFixed(1);
   const cost = entry.cost.toFixed(4);
   return (
-    <div style={{ color: "#666", fontSize: 11, padding: "8px 0", borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8 }}>
-      <span style={{ color: "#888" }}>done</span> in {duration}s &nbsp;
-      <span style={{ color: "#888" }}>cost:</span> ${cost} &nbsp;
-      <span style={{ color: "#888" }}>tokens:</span> {entry.inputTokens.toLocaleString()}↓ {entry.outputTokens.toLocaleString()}↑
+    <div style={{ color: colors.textFaint, fontSize: 11, padding: "8px 0", borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 8 }}>
+      <span style={{ color: colors.textDim }}>done</span> in {duration}s &nbsp;
+      <span style={{ color: colors.textDim }}>cost:</span> ${cost} &nbsp;
+      <span style={{ color: colors.textDim }}>tokens:</span> {entry.inputTokens.toLocaleString()}↓ {entry.outputTokens.toLocaleString()}↑
     </div>
   );
 }
@@ -562,7 +551,7 @@ export function OutputPanel({ open, entries, onClose, onPermissionRespond }: Out
           right: 12,
           width: "calc(50% - 24px)",
           height: "calc(100vh - 24px)",
-          background: "rgba(10, 10, 10, 0.78)",
+          background: colors.panelBg,
           border: "1px solid rgba(204, 17, 17, 0.4)",
           borderRadius: 6,
           transform: open ? "translateX(0)" : "translateX(calc(100% + 24px))",
@@ -570,7 +559,7 @@ export function OutputPanel({ open, entries, onClose, onPermissionRespond }: Out
           zIndex: 20,
           display: "flex",
           flexDirection: "column",
-          fontFamily: "monospace",
+          fontFamily: fonts.mono,
           overflow: "hidden",
         }}
       >
@@ -581,19 +570,19 @@ export function OutputPanel({ open, entries, onClose, onPermissionRespond }: Out
             alignItems: "center",
             justifyContent: "space-between",
             padding: "10px 16px",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            borderBottom: `1px solid ${colors.border}`,
             flexShrink: 0,
           }}
         >
-          <span style={{ color: "#666", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>Output</span>
+          <span style={{ color: colors.textFaint, fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>Output</span>
           <button
             onClick={onClose}
             style={{
               background: "none",
-              border: "1px solid rgba(255,255,255,0.1)",
-              color: "#666",
+              border: `1px solid ${colors.borderLight}`,
+              color: colors.textFaint,
               cursor: "pointer",
-              fontFamily: "monospace",
+              fontFamily: fonts.mono,
               fontSize: 13,
               padding: "2px 8px",
               borderRadius: 3,
