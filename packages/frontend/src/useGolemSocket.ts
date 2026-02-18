@@ -2,8 +2,21 @@ import { useRef, useEffect, useCallback, useState } from "react";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
 import { HEADER_TTS_AUDIO } from "@golem-code/types";
 
-const DEFAULT_WS_URL =
-  (import.meta as any).env?.VITE_GOLEM_WS_URL ?? "ws://localhost:4747/ws";
+function getDefaultWsUrl(): string {
+  // Allow explicit override via env var
+  const envUrl = (import.meta as any).env?.VITE_GOLEM_WS_URL;
+  if (envUrl) return envUrl;
+
+  // When served from the agent server, derive WS URL from the page origin
+  if (typeof window !== "undefined" && window.location) {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}/ws`;
+  }
+
+  return "ws://localhost:4747/ws";
+}
+
+const DEFAULT_WS_URL = getDefaultWsUrl();
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 

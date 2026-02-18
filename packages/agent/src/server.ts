@@ -19,8 +19,41 @@ type PendingQuestion = {
   originalInput: Record<string, unknown>;
 };
 
+export type GolemQueryOptions = {
+  /** Working directory for the Claude session. Defaults to process.cwd(). */
+  cwd?: string;
+  /** Claude model to use. */
+  model?: string;
+  /** Permission mode for tool execution. */
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
+  /** Maximum conversation turns. */
+  maxTurns?: number;
+  /** Maximum budget in USD. */
+  maxBudgetUsd?: number;
+  /** System prompt override. */
+  systemPrompt?: string;
+  /** Tools to auto-allow. */
+  allowedTools?: string[];
+  /** Tools to disallow. */
+  disallowedTools?: string[];
+  /** Continue the most recent conversation. */
+  continue?: boolean;
+  /** Resume a specific session ID. */
+  resume?: string;
+  /** Enable debug logging. */
+  debug?: boolean;
+  /** Additional directories to allow access. */
+  additionalDirectories?: string[];
+};
+
 export type GolemServerOptions = {
   port?: number;
+  /** Directory to serve static frontend files from. */
+  staticDir?: string;
+  /** SDK query options to pass through to every query. */
+  queryOptions?: GolemQueryOptions;
+  /** Initial prompt to run when the first client connects. */
+  initialPrompt?: string;
 };
 
 export type GolemServer = {
@@ -77,6 +110,9 @@ function labelForSuggestion(s: PermissionUpdate): string {
 
 export function createGolemServer(options: GolemServerOptions = {}): GolemServer {
   const port = options.port ?? (Number(process.env.GOLEM_PORT) || 4747);
+  const staticDir = options.staticDir ?? null;
+  const qOpts = options.queryOptions ?? {};
+  let initialPrompt = options.initialPrompt ?? null;
 
   const clients = new Set<ServerWebSocket<WSData>>();
   let activeQuery: Query | null = null;
@@ -179,11 +215,21 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
     const q = query({
       prompt,
       options: {
-        permissionMode: "default",
+        permissionMode: qOpts.permissionMode ?? "default",
         canUseTool: (toolName, input, opts) => canUseTool(toolName, input, opts),
         includePartialMessages: true,
         env: { ...process.env, CLAUDECODE: undefined },
         ...(currentSessionId ? { resume: currentSessionId } : {}),
+        ...(qOpts.cwd ? { cwd: qOpts.cwd } : {}),
+        ...(qOpts.model ? { model: qOpts.model } : {}),
+        ...(qOpts.maxTurns ? { maxTurns: qOpts.maxTurns } : {}),
+        ...(qOpts.maxBudgetUsd ? { maxBudgetUsd: qOpts.maxBudgetUsd } : {}),
+        ...(qOpts.allowedTools ? { allowedTools: qOpts.allowedTools } : {}),
+        ...(qOpts.disallowedTools ? { disallowedTools: qOpts.disallowedTools } : {}),
+        ...(qOpts.debug ? { debug: true } : {}),
+        ...(qOpts.additionalDirectories ? { additionalDirectories: qOpts.additionalDirectories } : {}),
+        ...(qOpts.systemPrompt ? { systemPrompt: qOpts.systemPrompt } : {}),
+        ...(qOpts.continue && !currentSessionId ? { continue: true } : {}),
       },
     });
 
@@ -336,9 +382,25 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
     }
   }
 
+  const MIME_TYPES: Record<string, string> = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm",
+  };
+
   const server = Bun.serve<WSData>({
     port,
-    fetch(req, server) {
+    async fetch(req, server) {
       const url = new URL(req.url);
 
       if (url.pathname === "/ws") {
@@ -359,12 +421,39 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
         });
       }
 
+      // Serve static frontend files if a static directory is configured
+      if (staticDir) {
+        let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
+        const fullPath = `${staticDir}${filePath}`;
+        const file = Bun.file(fullPath);
+        if (await file.exists()) {
+          const ext = filePath.slice(filePath.lastIndexOf("."));
+          const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
+          return new Response(file, {
+            headers: { "Content-Type": contentType },
+          });
+        }
+        // SPA fallback: serve index.html for non-file routes
+        const indexFile = Bun.file(`${staticDir}/index.html`);
+        if (await indexFile.exists()) {
+          return new Response(indexFile, {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+      }
+
       return new Response("golem-code agent server", { status: 200 });
     },
     websocket: {
       open(ws) {
         clients.add(ws);
         console.log(`[golem] Client connected (${clients.size} total)`);
+        // Auto-run initial prompt on first client connection
+        if (initialPrompt) {
+          const prompt = initialPrompt;
+          initialPrompt = null; // Only run once
+          runQuery(prompt);
+        }
       },
       message(ws, raw) {
         if (typeof raw !== "string") {

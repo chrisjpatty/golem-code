@@ -1,0 +1,17 @@
+{
+  "name": "@golem-code/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "summon": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build-frontend": "cd ../frontend && bun run build"
+  },
+  "dependencies": {
+    "@golem-code/agent": "workspace:*",
+    "@golem-code/types": "workspace:*"
+  }
+}
