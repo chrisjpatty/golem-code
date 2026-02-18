@@ -1,4 +1,7 @@
 import { describe, test, expect, afterEach, mock } from "bun:test";
+import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
 
 // Mock the stt module before importing server (whisper model isn't available in test)
@@ -198,5 +201,211 @@ describe("createGolemServer", () => {
     } finally {
       ws.close();
     }
+  });
+});
+
+describe("static file serving", () => {
+  let staticDir: string;
+
+  function setupStaticDir() {
+    staticDir = join(tmpdir(), `golem-test-static-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(staticDir, { recursive: true });
+    mkdirSync(join(staticDir, "assets"), { recursive: true });
+    writeFileSync(join(staticDir, "index.html"), "<html><body>Golem Test</body></html>");
+    writeFileSync(join(staticDir, "assets", "app.js"), "console.log('test');");
+    writeFileSync(join(staticDir, "assets", "style.css"), "body { color: red; }");
+    writeFileSync(join(staticDir, "data.json"), '{"key":"value"}');
+    return staticDir;
+  }
+
+  function cleanupStaticDir() {
+    try { rmSync(staticDir, { recursive: true, force: true }); } catch {}
+  }
+
+  test("serves index.html at root when staticDir is set", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/`);
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      expect(text).toContain("Golem Test");
+      expect(res.headers.get("content-type")).toBe("text/html");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("serves JS files with correct content type", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/assets/app.js`);
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      expect(text).toBe("console.log('test');");
+      expect(res.headers.get("content-type")).toBe("text/javascript");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("serves CSS files with correct content type", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/assets/style.css`);
+      expect(res.ok).toBe(true);
+      expect(res.headers.get("content-type")).toBe("text/css");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("serves JSON files with correct content type", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/data.json`);
+      expect(res.ok).toBe(true);
+      const body = await res.json();
+      expect(body).toEqual({ key: "value" });
+      expect(res.headers.get("content-type")).toBe("application/json");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("SPA fallback serves index.html for unknown routes", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/some/deep/route`);
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      expect(text).toContain("Golem Test");
+      expect(res.headers.get("content-type")).toBe("text/html");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("health endpoint still works with staticDir", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/health`);
+      expect(res.ok).toBe(true);
+      const body = await res.json();
+      expect(body.status).toBe("ok");
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("WebSocket still works with staticDir", async () => {
+    const dir = setupStaticDir();
+    const port = getPort();
+    server = createGolemServer({ port, staticDir: dir });
+
+    try {
+      const ws = await connectWS(port);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(server.getState().clients).toBe(1);
+      ws.close();
+    } finally {
+      cleanupStaticDir();
+    }
+  });
+
+  test("without staticDir, root returns plain text", async () => {
+    const port = getPort();
+    server = createGolemServer({ port });
+
+    const res = await fetch(`http://localhost:${port}/`);
+    const text = await res.text();
+    expect(text).toBe("golem-code agent server");
+  });
+});
+
+describe("queryOptions threading", () => {
+  test("server accepts queryOptions without error", () => {
+    const port = getPort();
+    server = createGolemServer({
+      port,
+      queryOptions: {
+        cwd: "/tmp",
+        model: "claude-sonnet-4-5-20250929",
+        permissionMode: "acceptEdits",
+        maxTurns: 10,
+        maxBudgetUsd: 5.0,
+        systemPrompt: "You are a test assistant",
+        allowedTools: ["Bash", "Read"],
+        disallowedTools: ["Write"],
+        debug: true,
+        additionalDirectories: ["/tmp/extra"],
+      },
+    });
+
+    expect(server.port).toBe(port);
+    const state = server.getState();
+    expect(state.clients).toBe(0);
+    expect(state.queryActive).toBe(false);
+  });
+
+  test("server accepts continue option", () => {
+    const port = getPort();
+    server = createGolemServer({
+      port,
+      queryOptions: { continue: true },
+    });
+    expect(server.port).toBe(port);
+  });
+
+  test("server accepts resume option", () => {
+    const port = getPort();
+    server = createGolemServer({
+      port,
+      queryOptions: { resume: "some-session-id" },
+    });
+    expect(server.port).toBe(port);
+  });
+});
+
+describe("initialPrompt", () => {
+  test("server accepts initialPrompt without error", () => {
+    const port = getPort();
+    server = createGolemServer({
+      port,
+      initialPrompt: "Hello from test",
+    });
+    expect(server.port).toBe(port);
+  });
+
+  test("server starts normally with all options combined", () => {
+    const port = getPort();
+    server = createGolemServer({
+      port,
+      queryOptions: {
+        cwd: "/tmp",
+        model: "claude-sonnet-4-5-20250929",
+        permissionMode: "default",
+      },
+      initialPrompt: "Run tests",
+    });
+    expect(server.port).toBe(port);
+    expect(server.getState().queryActive).toBe(false);
   });
 });
