@@ -15,6 +15,32 @@ function damp(current: number, target: number, speed: number, delta: number): nu
   return current + (target - current) * (1 - Math.exp(-speed * delta));
 }
 
+export type MouthExpression = 'neutral' | 'smile' | 'frown' | 'oh';
+
+type ExpressionOffsets = {
+  cornerDY: number;    // Y offset for upper mouth corners (19,20)
+  cornerDX: number;    // X offset (widens/narrows) for mouth corners (upper + jaw)
+  lipDY: number;       // Y offset for upper lip center (21)
+  lipDZ: number;       // Z offset for upper lip center (21)
+  jawCornerDY: number; // Y offset for jaw mouth corners (2,3)
+  jawLipDY: number;    // Y offset for jaw lip center (4)
+  jawLipDZ: number;    // Z offset for jaw lip center (4)
+  hingeDY: number;     // Y offset for jaw hinges (upper 22,23 + jaw 0,1)
+  cheekDY: number;     // Y offset for cheeks (upper 17,18)
+  jawOpen: number;     // jaw group rotation offset
+  jawDrop: number;     // jaw group Y position offset
+};
+
+const EXPRESSION_OFFSETS: Record<MouthExpression, ExpressionOffsets> = {
+  neutral:  { cornerDY: 0,     cornerDX: 0,    lipDY: 0,     lipDZ: 0,    jawCornerDY: 0,    jawLipDY: 0,     jawLipDZ: 0,    hingeDY: 0,     cheekDY: 0,     jawOpen: 0,     jawDrop: 0 },
+  // Smile: outer corners (hinges) UP most, inner mouth verts intermediate, lip centers DOWN
+  smile:    { cornerDY: 0.04,  cornerDX: 0.04, lipDY: -0.12, lipDZ: 0.02, jawCornerDY: 0.04, jawLipDY: -0.12, jawLipDZ: 0.02, hingeDY: 0.2,   cheekDY: 0.1,   jawOpen: -0.02, jawDrop: 0 },
+  // Frown: outer corners DOWN most, inner mouth verts intermediate, lip centers UP
+  frown:    { cornerDY: 0.06,  cornerDX: 0,    lipDY: 0.12,  lipDZ: -0.01,jawCornerDY: 0.06, jawLipDY: 0.12,  jawLipDZ: 0,    hingeDY: -0.18, cheekDY: -0.08, jawOpen: 0.03,  jawDrop: 0.02 },
+  // Oh: rounded O — upper lip arcs up, lower lip arcs down, corners narrow, jaw drops
+  oh:       { cornerDY: 0.1,   cornerDX: -0.15,lipDY: 0.15,  lipDZ: 0.06, jawCornerDY: -0.1, jawLipDY: -0.15, jawLipDZ: 0.06, hingeDY: -0.08, cheekDY: 0,     jawOpen: 0.2,   jawDrop: 0.18 },
+};
+
 export type GolemFaceHandle = {
   startSpeaking: () => void;
   stopSpeaking: () => void;
@@ -28,6 +54,7 @@ export type GolemFaceHandle = {
   headSnapDownRight: () => void;
   headShake: () => void;
   headNod: () => void;
+  setExpression: (expr: MouthExpression) => void;
 };
 
 type EyeGlowPhase = "off" | "ramp" | "hold" | "fade";
@@ -259,6 +286,34 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     nextSyllableAt: 0,
   });
 
+  // Expression state
+  const mouthExpr = useRef({
+    target: 'neutral' as MouthExpression,
+    currentOffsets: { cornerDY: 0, cornerDX: 0, lipDY: 0, lipDZ: 0, jawCornerDY: 0, jawLipDY: 0, jawLipDZ: 0, hingeDY: 0, cheekDY: 0, jawOpen: 0, jawDrop: 0 } as ExpressionOffsets,
+  });
+
+  // Store base positions for all expression-affected vertices
+  const upperExprBase = useMemo(() => {
+    const pos = upper.geo.getAttribute("position").array as Float32Array;
+    const v = (i: number) => ({ x: pos[i * 3], y: pos[i * 3 + 1], z: pos[i * 3 + 2] });
+    return {
+      v17: v(17), v18: v(18),   // cheeks
+      v19: v(19), v20: v(20),   // mouth corners
+      v21: v(21),               // upper lip center
+      v22: v(22), v23: v(23),   // jaw hinges
+    };
+  }, [upper.geo]);
+
+  const jawExprBase = useMemo(() => {
+    const pos = jaw.geo.getAttribute("position").array as Float32Array;
+    const v = (i: number) => ({ x: pos[i * 3], y: pos[i * 3 + 1], z: pos[i * 3 + 2] });
+    return {
+      v0: v(0), v1: v(1),       // jaw hinges
+      v2: v(2), v3: v(3),       // mouth corners
+      v4: v(4),                  // lower lip center
+    };
+  }, [jaw.geo]);
+
   useImperativeHandle(ref, () => ({
     startSpeaking: () => {
       speaking.current.active = true;
@@ -317,6 +372,9 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
       hg.type = "nod"; hg.phase = "windup";
       hg.startedAt = 0; hg.amplitude = 0.25; hg.frequency = 10; hg.cycles = 2;
       hg.targetY = 0; hg.targetX = -0.12;
+    },
+    setExpression: (expr: MouthExpression) => {
+      mouthExpr.current.target = expr;
     },
   }));
 
@@ -389,6 +447,7 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     // Jaw animation
     if (jawRef.current) {
       const sp = speaking.current;
+      const exprJaw = mouthExpr.current.currentOffsets;
       if (sp.active) {
         if (t > sp.nextSyllableAt) {
           const openness = 0.02 + Math.random() * 0.18;
@@ -398,14 +457,14 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
         }
         sp.currentAngle = damp(sp.currentAngle, sp.targetAngle, 22, d);
         sp.currentDrop = damp(sp.currentDrop, sp.targetDrop, 22, d);
-        jawRef.current.rotation.x = sp.currentAngle;
-        jawRef.current.position.y = -0.3 - sp.currentDrop;
+        jawRef.current.rotation.x = sp.currentAngle + exprJaw.jawOpen;
+        jawRef.current.position.y = -0.3 - sp.currentDrop - exprJaw.jawDrop;
       } else {
         const idleAngle = Math.sin(t * 0.8) * 0.03;
         sp.currentAngle = damp(sp.currentAngle, idleAngle, 6, d);
         sp.currentDrop = damp(sp.currentDrop, 0, 6, d);
-        jawRef.current.rotation.x = sp.currentAngle;
-        jawRef.current.position.y = -0.3 - sp.currentDrop;
+        jawRef.current.rotation.x = sp.currentAngle + exprJaw.jawOpen;
+        jawRef.current.position.y = -0.3 - sp.currentDrop - exprJaw.jawDrop;
       }
     }
     // Eye glow animation
@@ -447,6 +506,66 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     // Vertex glitch + spikes
     glitchUpper(t);
     glitchJaw(t);
+
+    // Expression animation — lerp all offsets toward target expression
+    {
+      const me = mouthExpr.current;
+      const target = EXPRESSION_OFFSETS[me.target];
+      const co = me.currentOffsets;
+      const speed = 8;
+
+      for (const key of Object.keys(co) as (keyof ExpressionOffsets)[]) {
+        (co as any)[key] = damp(co[key], target[key], speed, d);
+      }
+
+      // --- Upper face ---
+      const upperPos = upper.geo.getAttribute("position") as THREE.BufferAttribute;
+      const up = upperPos.array as Float32Array;
+      const ub = upperExprBase;
+
+      // 17: left cheek
+      up[17 * 3 + 1] = ub.v17.y + co.cheekDY;
+      // 18: right cheek
+      up[18 * 3 + 1] = ub.v18.y + co.cheekDY;
+      // 19: left mouth corner
+      up[19 * 3]     = ub.v19.x - co.cornerDX;
+      up[19 * 3 + 1] = ub.v19.y + co.cornerDY;
+      // 20: right mouth corner
+      up[20 * 3]     = ub.v20.x + co.cornerDX;
+      up[20 * 3 + 1] = ub.v20.y + co.cornerDY;
+      // 21: upper lip center
+      up[21 * 3 + 1] = ub.v21.y + co.lipDY;
+      up[21 * 3 + 2] = ub.v21.z + co.lipDZ;
+      // 22: left jaw hinge
+      up[22 * 3 + 1] = ub.v22.y + co.hingeDY;
+      // 23: right jaw hinge
+      up[23 * 3 + 1] = ub.v23.y + co.hingeDY;
+
+      upperPos.needsUpdate = true;
+      upper.geo.computeVertexNormals();
+
+      // --- Jaw ---
+      const jawPos = jaw.geo.getAttribute("position") as THREE.BufferAttribute;
+      const jp = jawPos.array as Float32Array;
+      const jb = jawExprBase;
+
+      // 0: left hinge
+      jp[0 * 3 + 1] = jb.v0.y + co.hingeDY;
+      // 1: right hinge
+      jp[1 * 3 + 1] = jb.v1.y + co.hingeDY;
+      // 2: left mouth corner
+      jp[2 * 3]     = jb.v2.x - co.cornerDX;
+      jp[2 * 3 + 1] = jb.v2.y + co.jawCornerDY;
+      // 3: right mouth corner
+      jp[3 * 3]     = jb.v3.x + co.cornerDX;
+      jp[3 * 3 + 1] = jb.v3.y + co.jawCornerDY;
+      // 4: lower lip center
+      jp[4 * 3 + 1] = jb.v4.y + co.jawLipDY;
+      jp[4 * 3 + 2] = jb.v4.z + co.jawLipDZ;
+
+      jawPos.needsUpdate = true;
+      jaw.geo.computeVertexNormals();
+    }
   });
 
   const material = (

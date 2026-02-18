@@ -82,6 +82,10 @@ export function DevPanel({
         label="Head Nod"
         onClick={() => faceRef.current?.headNod()}
       />
+      <Button label="Smile" onClick={() => faceRef.current?.setExpression('smile')} />
+      <Button label="Frown" onClick={() => faceRef.current?.setExpression('frown')} />
+<Button label="Oh" onClick={() => faceRef.current?.setExpression('oh')} />
+      <Button label="Neutral" onClick={() => faceRef.current?.setExpression('neutral')} />
       <Button label="Random Face" onClick={onRandomFace} />
       <Button label="Reset Face" onClick={onResetFace} />
       <Button label="Random Color" onClick={onRandomColor} />

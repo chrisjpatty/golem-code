@@ -36,6 +36,9 @@ export type FaceParams = {
   chinWidth: number;
   chinProtrusion: number;
   mouthWidth: number;
+  upperLipCurve: number;
+  upperLipFullness: number;
+  lowerLipFullness: number;
   hornCount: 0 | 1 | 2;
   hornLength: number;
   hornBaseWidth: number;
@@ -72,6 +75,9 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   chinWidth: 0.8,
   chinProtrusion: 0.4,
   mouthWidth: 0.7,
+  upperLipCurve: 0,
+  upperLipFullness: 0.3,
+  lowerLipFullness: 1.0,
   hornCount: 0,
   hornLength: 0.8,
   hornBaseWidth: 0.2,
@@ -108,6 +114,9 @@ export function generateFaceParams(seed: number): FaceParams {
     chinWidth: lerp(0.5, 1.1, rand()),
     chinProtrusion: lerp(0.2, 0.6, rand()),
     mouthWidth: lerp(0.5, 0.9, rand()),
+    upperLipCurve: lerp(-0.1, 0.1, rand()),
+    upperLipFullness: lerp(0.2, 0.4, rand()),
+    lowerLipFullness: lerp(0.8, 1.2, rand()),
     hornCount,
     hornLength: lerp(0.4, 1.5, rand()),
     hornBaseWidth: lerp(0.1, 0.35, rand()),
@@ -298,11 +307,11 @@ export function createUpperFaceGeometry(p: FaceParams): FaceGeometryData {
     [p.cheekWidth, 0.0, -0.15],
 
     // 19: mouth left corner
-    [-p.mouthWidth, -0.2, 0.15],
+    [-p.mouthWidth, -0.2 + p.upperLipCurve, 0.15],
     // 20: mouth right corner
-    [p.mouthWidth, -0.2, 0.15],
+    [p.mouthWidth, -0.2 + p.upperLipCurve, 0.15],
     // 21: upper lip center
-    [0, -0.1, 0.3],
+    [0, -0.1, p.upperLipFullness],
 
     // 22: left jaw hinge
     [-p.jawWidth, -0.3, -0.25],
@@ -379,7 +388,7 @@ export function createJawGeometry(p: FaceParams): FaceGeometryData {
     // 3: right mouth corner
     [p.mouthWidth, 0, 0.3],
     // 4: lower lip center
-    [0, 0.05, p.noseProtrusion],
+    [0, 0.05, p.noseProtrusion * p.lowerLipFullness],
 
     // 5: chin center
     [0, -p.chinLength, p.chinProtrusion],
