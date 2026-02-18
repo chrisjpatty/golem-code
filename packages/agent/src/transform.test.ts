@@ -62,8 +62,8 @@ describe("sdkMessageToGolemEvents", () => {
     });
   });
 
-  // -- system messages we ignore --
-  test("returns empty for unhandled system subtypes", () => {
+  // -- system status --
+  test("transforms system status into status:update", () => {
     const msg: SDKMessage = {
       type: "system",
       subtype: "status",
@@ -73,7 +73,11 @@ describe("sdkMessageToGolemEvents", () => {
     };
 
     const events = sdkMessageToGolemEvents(msg);
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "status:update",
+      status: "compacting",
+    });
   });
 
   // -- assistant with tool_use --
@@ -393,7 +397,7 @@ describe("sdkMessageToGolemEvents", () => {
     expect(events).toHaveLength(0);
   });
 
-  test("returns empty for tool_use_summary messages", () => {
+  test("transforms tool_use_summary into tool:summary", () => {
     const msg: SDKMessage = {
       type: "tool_use_summary",
       summary: "Used Bash to list files",
@@ -403,6 +407,11 @@ describe("sdkMessageToGolemEvents", () => {
     };
 
     const events = sdkMessageToGolemEvents(msg);
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool:summary",
+      summary: "Used Bash to list files",
+      toolUseIds: ["tool-1"],
+    });
   });
 });
