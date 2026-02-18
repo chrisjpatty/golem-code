@@ -398,9 +398,8 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
     ".wasm": "application/wasm",
   };
 
-  const server = Bun.serve<WSData>({
-    port,
-    async fetch(req, server) {
+  const serveConfig = {
+    async fetch(req: Request, server: { upgrade: (req: Request, opts: { data: WSData }) => boolean }) {
       const url = new URL(req.url);
 
       if (url.pathname === "/ws") {
@@ -445,7 +444,7 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
       return new Response("golem-code agent server", { status: 200 });
     },
     websocket: {
-      open(ws) {
+      open(ws: ServerWebSocket<WSData>) {
         clients.add(ws);
         console.log(`[golem] Client connected (${clients.size} total)`);
         // Auto-run initial prompt on first client connection
@@ -455,7 +454,7 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
           runQuery(prompt);
         }
       },
-      message(ws, raw) {
+      message(ws: ServerWebSocket<WSData>, raw: string | ArrayBuffer | Uint8Array) {
         if (typeof raw !== "string") {
           let ab: ArrayBuffer;
           if (raw instanceof ArrayBuffer) {
@@ -478,12 +477,24 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
           console.error("[golem] Invalid JSON:", raw);
         }
       },
-      close(ws) {
+      close(ws: ServerWebSocket<WSData>) {
         clients.delete(ws);
         console.log(`[golem] Client disconnected (${clients.size} total)`);
       },
     },
-  });
+  };
+
+  let server: ReturnType<typeof Bun.serve<WSData>>;
+  try {
+    server = Bun.serve<WSData>({ ...serveConfig, port });
+  } catch (err: any) {
+    if (err?.code === "EADDRINUSE") {
+      console.warn(`[golem] Port ${port} is in use, finding an available port...`);
+      server = Bun.serve<WSData>({ ...serveConfig, port: 0 });
+    } else {
+      throw err;
+    }
+  }
 
   console.log(`[golem] Server running on http://localhost:${server.port}`);
   console.log(`[golem] WebSocket endpoint: ws://localhost:${server.port}/ws`);

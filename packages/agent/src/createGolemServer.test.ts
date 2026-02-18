@@ -181,6 +181,51 @@ describe("createGolemServer", () => {
     }
   });
 
+  test("falls back to a free port when requested port is in use", async () => {
+    const port = getPort();
+    const server1 = createGolemServer({ port });
+
+    // Second server requesting the same port should get a different one
+    const server2 = createGolemServer({ port });
+
+    try {
+      expect(server1.port).toBe(port);
+      expect(server2.port).not.toBe(port);
+
+      // Both servers are functional
+      const [res1, res2] = await Promise.all([
+        fetch(`http://localhost:${server1.port}/health`),
+        fetch(`http://localhost:${server2.port}/health`),
+      ]);
+      expect(res1.ok).toBe(true);
+      expect(res2.ok).toBe(true);
+    } finally {
+      server1.stop();
+      server2.stop();
+    }
+  });
+
+  test("three instances can coexist on the same requested port", () => {
+    const port = getPort();
+    const servers = [
+      createGolemServer({ port }),
+      createGolemServer({ port }),
+      createGolemServer({ port }),
+    ];
+
+    try {
+      // All three should have unique ports
+      const ports = servers.map((s) => s.port);
+      const uniquePorts = new Set(ports);
+      expect(uniquePorts.size).toBe(3);
+
+      // First one gets the requested port
+      expect(servers[0]!.port).toBe(port);
+    } finally {
+      servers.forEach((s) => s.stop());
+    }
+  });
+
   test("conversation:clear resets pending counts", async () => {
     const port = getPort();
     server = createGolemServer({ port });
