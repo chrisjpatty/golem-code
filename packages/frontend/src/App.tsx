@@ -10,12 +10,11 @@ import { getRandomUnusedColor } from "./faceGen";
 import { VoiceButton } from "./VoiceButton";
 import { useGolemSocket } from "./useGolemSocket";
 import { useSubagentManager } from "./hooks/useSubagentManager";
-import type { GolemEvent, GolemCommand } from "@golem-code/types";
+import type { GolemEvent } from "@golem-code/types";
 
 export function App() {
   const faceRef = useRef<GolemFaceHandle>(null);
   const activeToolCount = useRef(0);
-  const sendCommandRef = useRef<(cmd: GolemCommand) => void>(undefined);
 
   const [faceSeed, setFaceSeed] = useState<number | undefined>(undefined);
   const [faceColor, setFaceColor] = useState<string | undefined>(undefined);
@@ -23,32 +22,36 @@ export function App() {
 
   const subagents = useSubagentManager();
 
+  function incrementTools() {
+    activeToolCount.current++;
+    faceRef.current?.startEyeGlow();
+  }
+
+  function decrementTools() {
+    activeToolCount.current = Math.max(0, activeToolCount.current - 1);
+    if (activeToolCount.current === 0) {
+      faceRef.current?.stopEyeGlow();
+    }
+  }
+
   const handleEvent = useCallback(
     (event: GolemEvent) => {
       switch (event.type) {
         case "tool:start":
-          activeToolCount.current++;
-          faceRef.current?.startEyeGlow();
+          incrementTools();
           break;
 
         case "tool:end":
-          activeToolCount.current = Math.max(0, activeToolCount.current - 1);
-          if (activeToolCount.current === 0) {
-            faceRef.current?.stopEyeGlow();
-          }
+          decrementTools();
           break;
 
         case "subagent:start":
-          activeToolCount.current++;
-          faceRef.current?.startEyeGlow();
+          incrementTools();
           subagents.spawnSubagent(event.toolUseId, event.description);
           break;
 
         case "subagent:end":
-          activeToolCount.current = Math.max(0, activeToolCount.current - 1);
-          if (activeToolCount.current === 0) {
-            faceRef.current?.stopEyeGlow();
-          }
+          decrementTools();
           subagents.markRemoving(event.toolUseId);
           break;
 
@@ -71,7 +74,6 @@ export function App() {
   const { sendCommand, connectionState } = useGolemSocket({
     onEvent: handleEvent,
   });
-  sendCommandRef.current = sendCommand;
 
   const handleVoiceTranscript = useCallback((text: string) => {
     sendCommand({ type: "inject", text });

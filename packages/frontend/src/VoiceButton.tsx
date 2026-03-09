@@ -9,38 +9,42 @@ type VoiceButtonProps = {
 export function VoiceButton({ onTranscript, connectionState = "connected" }: VoiceButtonProps) {
   const [pressed, setPressed] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const transcriptRef = useRef("");
 
   const handleDown = useCallback(() => {
     setPressed(true);
     setTranscript("");
+    transcriptRef.current = "";
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
       console.warn("[golem] SpeechRecognition not supported in this browser");
       return;
     }
 
-    const recognition = new SpeechRecognition();
+    const recognition = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       let finalTranscript = "";
       let interimTranscript = "";
       for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
+        const result = event.results[i]!;
         if (result.isFinal) {
-          finalTranscript += result[0].transcript;
+          finalTranscript += result[0]!.transcript;
         } else {
-          interimTranscript += result[0].transcript;
+          interimTranscript += result[0]!.transcript;
         }
       }
-      setTranscript(finalTranscript || interimTranscript);
+      const text = finalTranscript || interimTranscript;
+      transcriptRef.current = text;
+      setTranscript(text);
     };
 
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.warn("[golem] Speech recognition error:", event.error);
     };
 
@@ -56,14 +60,13 @@ export function VoiceButton({ onTranscript, connectionState = "connected" }: Voi
       recognitionRef.current = null;
     }
 
-    // Send the final transcript
-    if (transcript.trim()) {
-      onTranscript(transcript.trim());
+    const text = transcriptRef.current.trim();
+    if (text) {
+      onTranscript(text);
     }
 
-    // Clear transcript after a delay
     setTimeout(() => setTranscript(""), 3000);
-  }, [transcript, onTranscript]);
+  }, [onTranscript]);
 
   return (
     <div
@@ -99,20 +102,7 @@ export function VoiceButton({ onTranscript, connectionState = "connected" }: Voi
       <button
         onMouseDown={handleDown}
         onMouseUp={handleUp}
-        onMouseLeave={() => {
-          if (pressed) {
-            setPressed(false);
-            const recognition = recognitionRef.current;
-            if (recognition) {
-              recognition.stop();
-              recognitionRef.current = null;
-            }
-            if (transcript.trim()) {
-              onTranscript(transcript.trim());
-            }
-            setTimeout(() => setTranscript(""), 3000);
-          }
-        }}
+        onMouseLeave={() => { if (pressed) handleUp(); }}
         onTouchStart={(e) => {
           e.preventDefault();
           handleDown();

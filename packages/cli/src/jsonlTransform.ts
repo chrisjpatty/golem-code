@@ -14,6 +14,8 @@ export type JsonlTransformOptions = {
   onEvent: (event: GolemEvent) => void;
 };
 
+const SUBAGENT_TOOL_NAME = "Task";
+
 export function createJsonlTransform(options: JsonlTransformOptions) {
   const { onEvent } = options;
 
@@ -35,37 +37,28 @@ export function createJsonlTransform(options: JsonlTransformOptions) {
     }, 5000);
   }
 
+  /** Extract content blocks from a JSONL message field (array or {content: [...]}) */
+  function extractContentBlocks(message: unknown): unknown[] | null {
+    if (Array.isArray(message)) return message;
+    if (message && typeof message === "object") {
+      const content = (message as Record<string, unknown>).content;
+      if (Array.isArray(content)) return content;
+    }
+    return null;
+  }
+
   function handleEvent(data: unknown) {
     if (!data || typeof data !== "object") return;
     const record = data as Record<string, unknown>;
 
-    // Assistant message with tool_use content blocks
-    if (record.type === "assistant" && Array.isArray(record.message)) {
-      handleAssistantMessage(record.message);
-      return;
+    if (record.type === "assistant") {
+      const content = extractContentBlocks(record.message);
+      if (content) { handleAssistantMessage(content); return; }
     }
 
-    // Also handle assistant messages where content is in a "message" wrapper
-    if (record.type === "assistant" && record.message && typeof record.message === "object") {
-      const msg = record.message as Record<string, unknown>;
-      if (Array.isArray(msg.content)) {
-        handleAssistantMessage(msg.content);
-        return;
-      }
-    }
-
-    // User message with tool_result content blocks
-    if (record.type === "user" && Array.isArray(record.message)) {
-      handleUserMessage(record.message);
-      return;
-    }
-
-    if (record.type === "user" && record.message && typeof record.message === "object") {
-      const msg = record.message as Record<string, unknown>;
-      if (Array.isArray(msg.content)) {
-        handleUserMessage(msg.content);
-        return;
-      }
+    if (record.type === "user") {
+      const content = extractContentBlocks(record.message);
+      if (content) { handleUserMessage(content); return; }
     }
 
     // Progress events
@@ -99,7 +92,7 @@ export function createJsonlTransform(options: JsonlTransformOptions) {
         emitActivity("active");
         resetActivityTimer();
 
-        if (b.name === "Task") {
+        if (b.name === SUBAGENT_TOOL_NAME) {
           taskToolIds.add(b.id);
           const input = b.input as Record<string, unknown> | undefined;
           const description = typeof input?.description === "string" ? input.description : "";

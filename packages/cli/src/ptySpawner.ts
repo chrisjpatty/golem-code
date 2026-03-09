@@ -12,13 +12,18 @@ export type PtyProcess = Subprocess & {
   };
 };
 
-export function spawnClaude(args: string[], cwd: string): PtyProcess {
+export type PtyCleanup = {
+  proc: PtyProcess;
+  cleanup: () => void;
+};
+
+export function spawnClaude(args: string[], cwd: string): PtyCleanup {
   const proc = Bun.spawn(["claude", ...args], {
     cwd,
     terminal: {
       cols: process.stdout.columns || 80,
       rows: process.stdout.rows || 24,
-      data(_terminal: any, data: Buffer) {
+      data(_terminal: unknown, data: Buffer) {
         process.stdout.write(data);
       },
     },
@@ -30,19 +35,27 @@ export function spawnClaude(args: string[], cwd: string): PtyProcess {
     process.stdin.setRawMode(true);
   }
   process.stdin.resume();
-  process.stdin.on("data", (chunk: Buffer) => {
-    proc.terminal.write(chunk);
-  });
 
-  // Handle terminal resize
-  process.on("SIGWINCH", () => {
+  const onStdinData = (chunk: Buffer) => {
+    proc.terminal.write(chunk);
+  };
+  process.stdin.on("data", onStdinData);
+
+  const onResize = () => {
     proc.terminal.resize(
       process.stdout.columns || 80,
       process.stdout.rows || 24,
     );
-  });
+  };
+  process.on("SIGWINCH", onResize);
 
-  return proc;
+  function cleanup() {
+    process.stdin.removeListener("data", onStdinData);
+    process.removeListener("SIGWINCH", onResize);
+    restoreTerminal();
+  }
+
+  return { proc, cleanup };
 }
 
 /** Inject text into the PTY as if typed, followed by Enter */

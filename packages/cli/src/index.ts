@@ -4,22 +4,31 @@ import { resolve, join } from "path";
 import { existsSync } from "fs";
 import { parseArgs } from "./args";
 import { createSideChannelServer } from "./sideChannelServer";
-import { spawnClaude, injectText, restoreTerminal, type PtyProcess } from "./ptySpawner";
+import { spawnClaude, injectText, restoreTerminal, type PtyCleanup } from "./ptySpawner";
 import { discoverSessionFile } from "./sessionDiscovery";
 import { watchJsonlFile, type JsonlWatcher } from "./jsonlWatcher";
 import { createJsonlTransform } from "./jsonlTransform";
 
-// When compiled with `bun build --compile`, import.meta.dirname is /$bunfs/root/
-// so we resolve relative to the executable's real location instead.
+// When running from source, resolve the frontend dist from the repo structure.
+// When compiled, frontend assets are embedded via embeddedAssets.generated.ts.
 const IS_COMPILED = import.meta.dirname.startsWith("/$bunfs");
-const BASE_DIR = IS_COMPILED
-  ? resolve(process.execPath, "..")
-  : resolve(import.meta.dirname, "../..");
+const FRONTEND_DIST = IS_COMPILED
+  ? null
+  : resolve(import.meta.dirname, "../../frontend/dist");
 
-const FRONTEND_DIST = resolve(BASE_DIR, "packages/frontend/dist");
+// Lazy-load embedded assets only when compiled (the generated file won't exist in dev)
+async function getEmbeddedAssets() {
+  if (!IS_COMPILED) return null;
+  try {
+    const mod = await import("./embeddedAssets.generated");
+    return mod.EMBEDDED_ASSETS;
+  } catch {
+    return null;
+  }
+}
 
 async function buildFrontend(): Promise<void> {
-  const frontendDir = resolve(BASE_DIR, "packages/frontend");
+  const frontendDir = resolve(import.meta.dirname, "../../frontend");
 
   console.log("[summon] Building frontend...");
   const proc = Bun.spawn(["bun", "run", "build"], {
@@ -77,13 +86,23 @@ async function main() {
     process.exit(0);
   }
 
-  // Build frontend if dist doesn't exist
-  if (!args.dev && !existsSync(join(FRONTEND_DIST, "index.html"))) {
-    await buildFrontend();
+  // Resolve frontend assets
+  const embeddedAssets = await getEmbeddedAssets();
+
+  if (!IS_COMPILED && !args.dev) {
+    // Dev from source — build frontend if needed
+    if (FRONTEND_DIST && !existsSync(join(FRONTEND_DIST, "index.html"))) {
+      await buildFrontend();
+    }
+    if (FRONTEND_DIST && !existsSync(join(FRONTEND_DIST, "index.html"))) {
+      console.error(`[summon] Frontend not found at ${FRONTEND_DIST}. Run from the golem-code repo or use --dev mode.`);
+      process.exit(1);
+    }
   }
 
-  if (!args.dev && !existsSync(join(FRONTEND_DIST, "index.html"))) {
-    console.error(`[summon] Frontend not found at ${FRONTEND_DIST}. Run from the golem-code repo or use --dev mode.`);
+  if (IS_COMPILED && !embeddedAssets) {
+    console.error("[summon] Fatal: compiled binary is missing embedded frontend assets.");
+    console.error("Rebuild with: bun run packages/cli/src/embedAssets.ts && bun build packages/cli/src/index.ts --compile --outfile summon");
     process.exit(1);
   }
 
@@ -106,17 +125,22 @@ async function main() {
   }
 
   // Track PTY process and watcher for cleanup
-  let ptyProc: PtyProcess | null = null;
+  let pty: PtyCleanup | null = null;
   let jsonlWatcher: JsonlWatcher | null = null;
   let jsonlTransform: ReturnType<typeof createJsonlTransform> | null = null;
 
   // Start side-channel server
   const server = createSideChannelServer({
     port: args.port,
-    ...(args.dev ? {} : { staticDir: FRONTEND_DIST }),
+    // Compiled: serve from embedded assets. Dev from source: serve from disk. --dev: nothing (use Vite).
+    ...(embeddedAssets
+      ? { embeddedAssets }
+      : args.dev
+        ? {}
+        : { staticDir: FRONTEND_DIST! }),
     onInject: (text) => {
-      if (ptyProc) {
-        injectText(ptyProc, text);
+      if (pty) {
+        injectText(pty.proc, text);
       }
     },
   });
@@ -136,8 +160,8 @@ async function main() {
   function cleanup(code: number) {
     jsonlWatcher?.stop();
     jsonlTransform?.stop();
+    pty?.cleanup();
     server.stop();
-    restoreTerminal();
     process.exit(code);
   }
 
@@ -147,7 +171,7 @@ async function main() {
 
   // Spawn Claude Code in PTY — after this point, stdout belongs to the PTY.
   // No more console.log/warn/error or it will corrupt the TUI.
-  ptyProc = spawnClaude(claudeArgs, cwd);
+  pty = spawnClaude(claudeArgs, cwd);
 
   // Discover JSONL session file (silently — PTY owns the terminal now)
   try {
@@ -172,7 +196,7 @@ async function main() {
   }
 
   // Wait for PTY to exit
-  const exitCode = await ptyProc.exited;
+  const exitCode = await pty.proc.exited;
   cleanup(exitCode);
 }
 

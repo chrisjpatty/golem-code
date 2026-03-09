@@ -3,7 +3,7 @@
  * Handles partial writes by buffering incomplete lines.
  */
 
-import { readFileSync, statSync, watchFile, unwatchFile } from "fs";
+import { openSync, readSync, closeSync, statSync, watchFile, unwatchFile } from "fs";
 
 export type JsonlWatcherOptions = {
   /** Called for each complete JSON object parsed from a line */
@@ -47,14 +47,16 @@ export function watchJsonlFile(
 
     if (fileSize <= offset) return;
 
-    // Read new bytes from last offset
-    const fd = Bun.file(filePath);
+    // Read only the new bytes using positional read
+    const bytesToRead = fileSize - offset;
+    const buf = Buffer.alloc(bytesToRead);
+    let fd: number | null = null;
     try {
-      const fullContent = readFileSync(filePath, "utf-8");
-      const newContent = fullContent.slice(offset);
-      offset = fullContent.length;
+      fd = openSync(filePath, "r");
+      readSync(fd, buf, 0, bytesToRead, offset);
+      offset = fileSize;
 
-      buffer += newContent;
+      buffer += buf.toString("utf-8");
       const lines = buffer.split("\n");
 
       // Last element is either empty (line ended with \n) or an incomplete line
@@ -72,6 +74,10 @@ export function watchJsonlFile(
       }
     } catch {
       // Read error, retry next poll
+    } finally {
+      if (fd !== null) {
+        try { closeSync(fd); } catch { /* ignore */ }
+      }
     }
   }
 

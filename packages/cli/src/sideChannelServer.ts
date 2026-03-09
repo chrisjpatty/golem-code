@@ -9,10 +9,15 @@ import type { GolemEvent, GolemCommand } from "@golem-code/types";
 
 type WSData = { id: string };
 
+/** Embedded asset entry — data is a Buffer, served from memory */
+export type EmbeddedAsset = { data: Buffer; size: number };
+
 export type SideChannelServerOptions = {
   port?: number;
-  /** Directory to serve static frontend files from */
+  /** Directory to serve static frontend files from (dev mode) */
   staticDir?: string;
+  /** Embedded frontend assets — used when no staticDir is set (compiled binary) */
+  embeddedAssets?: Record<string, EmbeddedAsset>;
   /** Called when a client sends an inject command */
   onInject?: (text: string) => void;
 };
@@ -40,11 +45,17 @@ const MIME_TYPES: Record<string, string> = {
   ".hdr": "application/octet-stream",
 };
 
+function getMimeType(path: string): string {
+  const ext = path.slice(path.lastIndexOf("."));
+  return MIME_TYPES[ext] ?? "application/octet-stream";
+}
+
 export function createSideChannelServer(
   options: SideChannelServerOptions = {},
 ): SideChannelServer {
   const port = options.port ?? 4747;
   const staticDir = options.staticDir ?? null;
+  const embeddedAssets = options.embeddedAssets ?? null;
   const onInject = options.onInject;
 
   const clients = new Set<ServerWebSocket<WSData>>();
@@ -54,6 +65,28 @@ export function createSideChannelServer(
     for (const ws of clients) {
       ws.send(json);
     }
+  }
+
+  function serveEmbedded(pathname: string): Response | null {
+    if (!embeddedAssets) return null;
+
+    const key = pathname === "/" ? "/index.html" : pathname;
+    const asset = embeddedAssets[key];
+    if (asset) {
+      return new Response(asset.data, {
+        headers: { "Content-Type": getMimeType(key) },
+      });
+    }
+
+    // SPA fallback
+    const index = embeddedAssets["/index.html"];
+    if (index) {
+      return new Response(index.data, {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+
+    return null;
   }
 
   const serveConfig = {
@@ -80,25 +113,26 @@ export function createSideChannelServer(
         });
       }
 
-      // Serve static frontend files
+      // Serve from embedded assets (compiled binary)
+      const embedded = serveEmbedded(url.pathname);
+      if (embedded) return embedded;
+
+      // Serve from filesystem (dev mode)
       if (staticDir) {
-        let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
+        const filePath = url.pathname === "/" ? "/index.html" : url.pathname;
         const fullPath = resolve(staticDir, "." + normalize(filePath));
         if (!fullPath.startsWith(staticDir)) {
           return new Response("Forbidden", { status: 403 });
         }
         const file = Bun.file(fullPath);
-        if (await file.exists()) {
-          const ext = filePath.slice(filePath.lastIndexOf("."));
-          const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
+        if (file.size > 0) {
           return new Response(file, {
-            headers: { "Content-Type": contentType },
+            headers: { "Content-Type": getMimeType(filePath) },
           });
         }
         // SPA fallback
-        const indexPath = resolve(staticDir, "index.html");
-        const indexFile = Bun.file(indexPath);
-        if (await indexFile.exists()) {
+        const indexFile = Bun.file(resolve(staticDir, "index.html"));
+        if (indexFile.size > 0) {
           return new Response(indexFile, {
             headers: { "Content-Type": "text/html" },
           });
@@ -110,7 +144,6 @@ export function createSideChannelServer(
     websocket: {
       open(ws: ServerWebSocket<WSData>) {
         clients.add(ws);
-        // console.log(`[golem] Client connected (${clients.size} total)`);
       },
       message(
         ws: ServerWebSocket<WSData>,
@@ -124,12 +157,11 @@ export function createSideChannelServer(
             onInject(cmd.text);
           }
         } catch {
-          // console.error("[golem] Invalid JSON:", raw);
+          // Invalid JSON — ignore
         }
       },
       close(ws: ServerWebSocket<WSData>) {
         clients.delete(ws);
-        // console.log(`[golem] Client disconnected (${clients.size} total)`);
       },
     },
   };
@@ -139,7 +171,6 @@ export function createSideChannelServer(
     server = Bun.serve<WSData>({ ...serveConfig, port });
   } catch (err: any) {
     if (err?.code === "EADDRINUSE") {
-      // Port in use, fall back to OS-assigned port
       server = Bun.serve<WSData>({ ...serveConfig, port: 0 });
     } else {
       throw err;
