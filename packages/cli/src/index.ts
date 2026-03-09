@@ -5,9 +5,15 @@ import { existsSync } from "fs";
 import { parseArgs } from "./args";
 import { createSideChannelServer } from "./sideChannelServer";
 import { spawnClaude, injectText, restoreTerminal, type PtyCleanup } from "./ptySpawner";
-import { discoverSessionFile } from "./sessionDiscovery";
-import { watchJsonlFile, type JsonlWatcher } from "./jsonlWatcher";
-import { createJsonlTransform } from "./jsonlTransform";
+import { createHookTransform } from "./hookTransform";
+import { registerInstance, unregisterInstance, cleanStaleInstances } from "./instanceRegistry";
+import type { GolemAgentInit } from "@golem-code/types";
+
+// Face colors for agent identity (must match frontend/src/faceGen.ts FACE_COLORS)
+const FACE_COLORS = [
+  "#cc1111", "#1155cc", "#11aa44", "#cc8811", "#8822cc", "#cc1177",
+  "#11aaaa", "#cc5511", "#4466cc", "#44aa11", "#aa1166", "#888888",
+];
 
 // When running from source, resolve the frontend dist from the repo structure.
 // When compiled, frontend assets are embedded via embeddedAssets.generated.ts.
@@ -106,6 +112,9 @@ async function main() {
     process.exit(1);
   }
 
+  // Clean up any stale instance files from crashed sessions
+  await cleanStaleInstances();
+
   const cwd = args.cwd ? resolve(args.cwd) : process.cwd();
 
   // Build Claude CLI args
@@ -124,14 +133,32 @@ async function main() {
     claudeArgs.push(...args.passthroughArgs);
   }
 
-  // Track PTY process and watcher for cleanup
+  // Generate unique agent identity for this instance
+  const agentInit: GolemAgentInit = {
+    type: "agent:init",
+    agentId: crypto.randomUUID(),
+    seed: Math.floor(Math.random() * 2 ** 32),
+    color: FACE_COLORS[Math.floor(Math.random() * FACE_COLORS.length)],
+  };
+
+  // Track PTY process for cleanup
   let pty: PtyCleanup | null = null;
-  let jsonlWatcher: JsonlWatcher | null = null;
-  let jsonlTransform: ReturnType<typeof createJsonlTransform> | null = null;
+  let instanceId: string | null = null;
+
+  // Bridge: hook events → GolemEvents → WebSocket broadcast
+  // Both callbacks capture their counterpart lazily (called after init).
+  let broadcastEvent: (event: import("@golem-code/types").GolemEvent) => void;
+  let handleHookEvent: (data: Record<string, unknown>) => void;
+
+  const hookTransform = createHookTransform({
+    onEvent: (event) => broadcastEvent(event),
+  });
+  handleHookEvent = (data) => hookTransform.handleHookEvent(data);
 
   // Start side-channel server
   const server = createSideChannelServer({
-    port: args.port,
+    port: args.port ?? 6661,
+    agentInit,
     // Compiled: serve from embedded assets. Dev from source: serve from disk. --dev: nothing (use Vite).
     ...(embeddedAssets
       ? { embeddedAssets }
@@ -143,7 +170,13 @@ async function main() {
         injectText(pty.proc, text);
       }
     },
+    onHookEvent: (data) => handleHookEvent(data),
   });
+
+  broadcastEvent = (event) => server.broadcast(event);
+
+  // Register this instance so the plugin can discover our port
+  instanceId = registerInstance(server.port);
 
   const url = `http://localhost:${server.port}`;
   console.log(`[summon] Golem server: ${url}`);
@@ -158,42 +191,20 @@ async function main() {
 
   // Ensure cleanup on exit
   function cleanup(code: number) {
-    jsonlWatcher?.stop();
-    jsonlTransform?.stop();
+    if (instanceId) unregisterInstance(instanceId);
     pty?.cleanup();
     server.stop();
     process.exit(code);
   }
 
   process.on("exit", () => {
+    if (instanceId) unregisterInstance(instanceId);
     restoreTerminal();
   });
 
   // Spawn Claude Code in PTY — after this point, stdout belongs to the PTY.
   // No more console.log/warn/error or it will corrupt the TUI.
   pty = spawnClaude(claudeArgs, cwd);
-
-  // Discover JSONL session file (silently — PTY owns the terminal now)
-  try {
-    const sessionFile = await discoverSessionFile({
-      cwd,
-      continueOrResume: !!(args.continue || args.resume),
-    });
-
-    jsonlTransform = createJsonlTransform({
-      onEvent: (event) => {
-        server.broadcast(event);
-      },
-    });
-
-    jsonlWatcher = watchJsonlFile(sessionFile, {
-      onEvent: (data) => {
-        jsonlTransform!.handleEvent(data);
-      },
-    });
-  } catch {
-    // Session discovery failed — face won't react, but Claude still works fine
-  }
 
   // Wait for PTY to exit
   const exitCode = await pty.proc.exited;
@@ -212,7 +223,7 @@ Options:
   -c, --continue                Continue the most recent conversation
   -r, --resume <session-id>     Resume a specific session
   --cwd <dir>                   Working directory (default: current directory)
-  --port <port>                 Golem server port (default: 4747)
+  --port <port>                 Golem server port (default: 6661)
   --no-open                     Don't auto-open the browser
   --dev                         Dev mode: skip frontend build and static serving
   -v, --version                 Show version

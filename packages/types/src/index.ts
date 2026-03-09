@@ -36,13 +36,21 @@ export type GolemTurnEnd = {
   type: "turn:end";
 };
 
+export type GolemAgentInit = {
+  type: "agent:init";
+  agentId: string;
+  seed: number;
+  color: string;
+};
+
 export type GolemEvent =
   | GolemToolStart
   | GolemToolEnd
   | GolemSubagentStart
   | GolemSubagentEnd
   | GolemActivity
-  | GolemTurnEnd;
+  | GolemTurnEnd
+  | GolemAgentInit;
 
 // -- Client → Server commands --
 

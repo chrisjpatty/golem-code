@@ -66,6 +66,11 @@ export function App() {
           faceRef.current?.stopEyeGlow();
           subagents.markAllRemoving();
           break;
+
+        case "agent:init":
+          setFaceSeed(event.seed);
+          setFaceColor(event.color);
+          break;
       }
     },
     [subagents],

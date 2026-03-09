@@ -5,7 +5,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { resolve, normalize } from "path";
-import type { GolemEvent, GolemCommand } from "@golem-code/types";
+import type { GolemEvent, GolemCommand, GolemAgentInit } from "@golem-code/types";
 
 type WSData = { id: string };
 
@@ -20,6 +20,10 @@ export type SideChannelServerOptions = {
   embeddedAssets?: Record<string, EmbeddedAsset>;
   /** Called when a client sends an inject command */
   onInject?: (text: string) => void;
+  /** Agent identity sent to each connecting frontend client */
+  agentInit?: GolemAgentInit;
+  /** Called when a hook event is received via POST /hook */
+  onHookEvent?: (data: Record<string, unknown>) => void;
 };
 
 export type SideChannelServer = {
@@ -57,6 +61,8 @@ export function createSideChannelServer(
   const staticDir = options.staticDir ?? null;
   const embeddedAssets = options.embeddedAssets ?? null;
   const onInject = options.onInject;
+  const onHookEvent = options.onHookEvent;
+  const agentInit = options.agentInit ?? null;
 
   const clients = new Set<ServerWebSocket<WSData>>();
 
@@ -106,6 +112,16 @@ export function createSideChannelServer(
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/hook" && req.method === "POST") {
+        try {
+          const body = await req.json() as Record<string, unknown>;
+          onHookEvent?.(body);
+        } catch {
+          // Invalid JSON — ignore
+        }
+        return Response.json({ status: "ok" });
+      }
+
       if (url.pathname === "/health") {
         return Response.json({
           status: "ok",
@@ -144,6 +160,9 @@ export function createSideChannelServer(
     websocket: {
       open(ws: ServerWebSocket<WSData>) {
         clients.add(ws);
+        if (agentInit) {
+          ws.send(JSON.stringify(agentInit));
+        }
       },
       message(
         ws: ServerWebSocket<WSData>,
@@ -167,15 +186,19 @@ export function createSideChannelServer(
   };
 
   let server: ReturnType<typeof Bun.serve<WSData>>;
-  try {
-    server = Bun.serve<WSData>({ ...serveConfig, port });
-  } catch (err: any) {
-    if (err?.code === "EADDRINUSE") {
-      server = Bun.serve<WSData>({ ...serveConfig, port: 0 });
-    } else {
-      throw err;
+  const MAX_PORT_ATTEMPTS = 20;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+    try {
+      server = Bun.serve<WSData>({ ...serveConfig, port: port + attempt });
+      lastError = null;
+      break;
+    } catch (err: any) {
+      lastError = err;
+      if (err?.code !== "EADDRINUSE") throw err;
     }
   }
+  if (lastError) throw lastError;
 
   return {
     get port() {

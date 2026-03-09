@@ -1,0 +1,9 @@
+{
+  "name": "golem-code",
+  "version": "0.1.0",
+  "description": "Ambient 3D companion for Claude Code — routes events to the Golem visualization server",
+  "author": {
+    "name": "golem-code"
+  },
+  "hooks": "./hooks/hooks.json"
+}
