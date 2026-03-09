@@ -1,35 +1,77 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { ConnectionState } from "./useGolemSocket";
 
 type VoiceButtonProps = {
-  onPressStart: () => void;
-  onPressEnd: () => void;
-  transcript?: string;
-  panelOpen?: boolean;
+  onTranscript: (text: string) => void;
   connectionState?: ConnectionState;
 };
 
-export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = false, connectionState = "connected" }: VoiceButtonProps) {
+export function VoiceButton({ onTranscript, connectionState = "connected" }: VoiceButtonProps) {
   const [pressed, setPressed] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const recognitionRef = useRef<any>(null);
 
   const handleDown = useCallback(() => {
     setPressed(true);
-    onPressStart();
-  }, [onPressStart]);
+    setTranscript("");
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn("[golem] SpeechRecognition not supported in this browser");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+      setTranscript(finalTranscript || interimTranscript);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn("[golem] Speech recognition error:", event.error);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, []);
 
   const handleUp = useCallback(() => {
     setPressed(false);
-    onPressEnd();
-  }, [onPressEnd]);
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      recognition.stop();
+      recognitionRef.current = null;
+    }
+
+    // Send the final transcript
+    if (transcript.trim()) {
+      onTranscript(transcript.trim());
+    }
+
+    // Clear transcript after a delay
+    setTimeout(() => setTranscript(""), 3000);
+  }, [transcript, onTranscript]);
 
   return (
     <div
       style={{
         position: "fixed",
         bottom: 24,
-        left: panelOpen ? "25%" : "50%",
+        left: "50%",
         transform: "translateX(-50%)",
-        transition: "left 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -60,7 +102,15 @@ export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = 
         onMouseLeave={() => {
           if (pressed) {
             setPressed(false);
-            onPressEnd();
+            const recognition = recognitionRef.current;
+            if (recognition) {
+              recognition.stop();
+              recognitionRef.current = null;
+            }
+            if (transcript.trim()) {
+              onTranscript(transcript.trim());
+            }
+            setTimeout(() => setTranscript(""), 3000);
           }
         }}
         onTouchStart={(e) => {

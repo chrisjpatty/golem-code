@@ -29,7 +29,7 @@ export type SubagentPositions = Map<string, { x: number; y: number }>;
 
 type SubagentFaceProps = {
   subagent: ActiveSubagent;
-  panelOpen: boolean;
+  panelOpen?: boolean;
   positions: React.RefObject<SubagentPositions>;
   targetScale: number;
   removing?: boolean;
@@ -42,7 +42,7 @@ const BASE_REPULSE_STRENGTH = 0.6;
 /** Fraction of viewport to use as padding on each edge */
 const PADDING = 0.08;
 
-export function SubagentFace({ subagent, panelOpen, positions, targetScale, removing, onRemoved }: SubagentFaceProps) {
+export function SubagentFace({ subagent, panelOpen = false, positions, targetScale, removing, onRemoved }: SubagentFaceProps) {
   const groupRef = useRef<THREE.Group>(null);
   const faceRef = useRef<GolemFaceHandle>(null);
   const scaleRef = useRef(0);

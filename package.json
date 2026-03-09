@@ -5,8 +5,7 @@
   "scripts": {
     "summon": "bun run packages/cli/src/index.ts",
     "test": "bun test packages/*/src/",
-    "build": "cd packages/frontend && bun run build",
-    "download-models": "bash scripts/download-models.sh"
+    "build": "cd packages/frontend && bun run build"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",

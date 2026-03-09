@@ -2,13 +2,24 @@
 
 import { resolve, join } from "path";
 import { existsSync } from "fs";
-import { createGolemServer, type GolemServerOptions, type GolemQueryOptions } from "@golem-code/agent";
 import { parseArgs } from "./args";
+import { createSideChannelServer } from "./sideChannelServer";
+import { spawnClaude, injectText, restoreTerminal, type PtyProcess } from "./ptySpawner";
+import { discoverSessionFile } from "./sessionDiscovery";
+import { watchJsonlFile, type JsonlWatcher } from "./jsonlWatcher";
+import { createJsonlTransform } from "./jsonlTransform";
 
-const FRONTEND_DIST = resolve(import.meta.dirname, "../../frontend/dist");
+// When compiled with `bun build --compile`, import.meta.dirname is /$bunfs/root/
+// so we resolve relative to the executable's real location instead.
+const IS_COMPILED = import.meta.dirname.startsWith("/$bunfs");
+const BASE_DIR = IS_COMPILED
+  ? resolve(process.execPath, "..")
+  : resolve(import.meta.dirname, "../..");
+
+const FRONTEND_DIST = resolve(BASE_DIR, "packages/frontend/dist");
 
 async function buildFrontend(): Promise<void> {
-  const frontendDir = resolve(import.meta.dirname, "../../frontend");
+  const frontendDir = resolve(BASE_DIR, "packages/frontend");
 
   console.log("[summon] Building frontend...");
   const proc = Bun.spawn(["bun", "run", "build"], {
@@ -38,7 +49,6 @@ function openBrowser(url: string): void {
     cmd = "cmd";
     args = ["/c", "start", url];
   } else {
-    // Linux and others
     cmd = "xdg-open";
     args = [url];
   }
@@ -72,44 +82,46 @@ async function main() {
     await buildFrontend();
   }
 
-  // Verify frontend is available after build attempt
   if (!args.dev && !existsSync(join(FRONTEND_DIST, "index.html"))) {
     console.error(`[summon] Frontend not found at ${FRONTEND_DIST}. Run from the golem-code repo or use --dev mode.`);
     process.exit(1);
   }
 
-  // Resolve working directory
   const cwd = args.cwd ? resolve(args.cwd) : process.cwd();
 
-  // Build query options from CLI args
-  const queryOptions: GolemQueryOptions = {
-    cwd,
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
-    ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
-    ...(args.maxBudgetUsd ? { maxBudgetUsd: args.maxBudgetUsd } : {}),
-    ...(args.systemPrompt ? { systemPrompt: args.systemPrompt } : {}),
-    ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
-    ...(args.disallowedTools ? { disallowedTools: args.disallowedTools } : {}),
-    ...(args.continue ? { continue: true } : {}),
-    ...(args.resume ? { resume: args.resume } : {}),
-    ...(args.debug ? { debug: true } : {}),
-    ...(args.additionalDirectories ? { additionalDirectories: args.additionalDirectories } : {}),
-  };
+  // Build Claude CLI args
+  const claudeArgs: string[] = [];
 
-  const serverOptions: GolemServerOptions = {
+  if (args.prompt) {
+    claudeArgs.push("-p", args.prompt);
+  }
+  if (args.continue) {
+    claudeArgs.push("--continue");
+  }
+  if (args.resume) {
+    claudeArgs.push("--resume", args.resume);
+  }
+  if (args.passthroughArgs) {
+    claudeArgs.push(...args.passthroughArgs);
+  }
+
+  // Track PTY process and watcher for cleanup
+  let ptyProc: PtyProcess | null = null;
+  let jsonlWatcher: JsonlWatcher | null = null;
+  let jsonlTransform: ReturnType<typeof createJsonlTransform> | null = null;
+
+  // Start side-channel server
+  const server = createSideChannelServer({
     port: args.port,
-    queryOptions,
-    // In dev mode, don't serve static files (use Vite dev server separately)
     ...(args.dev ? {} : { staticDir: FRONTEND_DIST }),
-    // If a prompt was provided, auto-run it when the frontend connects
-    ...(args.prompt ? { initialPrompt: args.prompt } : {}),
-  };
+    onInject: (text) => {
+      if (ptyProc) {
+        injectText(ptyProc, text);
+      }
+    },
+  });
 
-  const server = createGolemServer(serverOptions);
   const url = `http://localhost:${server.port}`;
-
-  console.log(`[summon] Working directory: ${cwd}`);
   console.log(`[summon] Golem server: ${url}`);
 
   if (args.dev) {
@@ -120,55 +132,81 @@ async function main() {
     openBrowser(url);
   }
 
-  // Keep the process alive
-  process.on("SIGINT", () => {
-    console.log("\n[summon] Shutting down...");
+  // Ensure cleanup on exit
+  function cleanup(code: number) {
+    jsonlWatcher?.stop();
+    jsonlTransform?.stop();
     server.stop();
-    process.exit(0);
+    restoreTerminal();
+    process.exit(code);
+  }
+
+  process.on("exit", () => {
+    restoreTerminal();
   });
 
-  process.on("SIGTERM", () => {
-    server.stop();
-    process.exit(0);
-  });
+  // Spawn Claude Code in PTY — after this point, stdout belongs to the PTY.
+  // No more console.log/warn/error or it will corrupt the TUI.
+  ptyProc = spawnClaude(claudeArgs, cwd);
+
+  // Discover JSONL session file (silently — PTY owns the terminal now)
+  try {
+    const sessionFile = await discoverSessionFile({
+      cwd,
+      continueOrResume: !!(args.continue || args.resume),
+    });
+
+    jsonlTransform = createJsonlTransform({
+      onEvent: (event) => {
+        server.broadcast(event);
+      },
+    });
+
+    jsonlWatcher = watchJsonlFile(sessionFile, {
+      onEvent: (data) => {
+        jsonlTransform!.handleEvent(data);
+      },
+    });
+  } catch {
+    // Session discovery failed — face won't react, but Claude still works fine
+  }
+
+  // Wait for PTY to exit
+  const exitCode = await ptyProc.exited;
+  cleanup(exitCode);
 }
 
 function printHelp() {
   console.log(`
-summon - Launch golem-code, a visual Claude Code alternative
+summon - Launch Claude Code with the Golem ambient companion
 
 Usage:
   summon [options] [prompt]
 
 Options:
-  -p, --prompt <text>           Initial prompt to send
-  -m, --model <model>           Claude model to use
-  --permission-mode <mode>      Permission mode: default, acceptEdits, bypassPermissions, plan, dontAsk
-  --max-turns <n>               Maximum conversation turns
-  --max-budget-usd <n>          Maximum budget in USD
-  --system-prompt <text>        Custom system prompt
-  --allowed-tools <tools>       Comma-separated list of tools to auto-allow
-  --disallowed-tools <tools>    Comma-separated list of tools to disallow
+  -p, --prompt <text>           Initial prompt (forwarded to Claude via -p)
   -c, --continue                Continue the most recent conversation
   -r, --resume <session-id>     Resume a specific session
   --cwd <dir>                   Working directory (default: current directory)
-  --add-dir <dir>               Additional directory to allow (can repeat)
-  --port <port>                 Server port (default: 4747)
-  --debug                       Enable debug logging
+  --port <port>                 Golem server port (default: 4747)
   --no-open                     Don't auto-open the browser
   --dev                         Dev mode: skip frontend build and static serving
   -v, --version                 Show version
   -h, --help                    Show this help
 
+  --                            Pass remaining args directly to Claude Code
+
 Examples:
-  summon                        Launch in current directory
-  summon "Fix the failing tests"   Launch with an initial prompt
-  summon --model claude-sonnet-4-5-20250929 -c   Continue with Sonnet
-  summon --cwd ~/my-project     Launch in a specific directory
+  summon                            Launch Claude Code with Golem face
+  summon "Fix the failing tests"    Launch with an initial prompt
+  summon -c                         Continue most recent conversation
+  summon --cwd ~/my-project         Launch in a specific directory
+  summon -- --model sonnet          Pass --model to Claude directly
 `.trim());
 }
 
 main().catch((err) => {
+  restoreTerminal();
   console.error("[summon] Fatal error:", err);
   process.exit(1);
 });
