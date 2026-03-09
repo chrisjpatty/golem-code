@@ -51,6 +51,7 @@ export function SubagentFace({ subagent, panelOpen, positions, targetScale, remo
   const repulseRef = useRef({ x: 0, y: 0 });
   // Damped wander bounds for smooth panel open/close transition
   const boundsRef = useRef({ centerX: 0, halfW: 1, halfH: 1 });
+  const firstFrameRef = useRef(true);
 
   const { viewport } = useThree();
 
@@ -106,9 +107,18 @@ export function SubagentFace({ subagent, panelOpen, positions, targetScale, remo
     const targetHalfH = vh / 2 - padY;
 
     const b = boundsRef.current;
-    b.centerX = damp(b.centerX, targetCenterX, 5, d);
-    b.halfW = damp(b.halfW, targetHalfW, 5, d);
-    b.halfH = damp(b.halfH, targetHalfH, 5, d);
+    // On first frame, snap bounds so sub-agents launch from the correct
+    // position (e.g. left side when panel is open) instead of from center.
+    if (firstFrameRef.current) {
+      b.centerX = targetCenterX;
+      b.halfW = targetHalfW;
+      b.halfH = targetHalfH;
+      firstFrameRef.current = false;
+    } else {
+      b.centerX = damp(b.centerX, targetCenterX, 5, d);
+      b.halfW = damp(b.halfW, targetHalfW, 5, d);
+      b.halfH = damp(b.halfH, targetHalfH, 5, d);
+    }
 
     // Continuous smooth motion via layered sine waves
     // Sine outputs are in [-1, 1] normalized range, then mapped to bounds

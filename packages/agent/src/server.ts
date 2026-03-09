@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import { resolve, normalize } from "path";
 import { query, type Query, type PermissionResult, type PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import type { GolemCommand, GolemEvent, GolemQuestion } from "@golem-code/types";
 import { HEADER_MIC_AUDIO } from "@golem-code/types";
@@ -116,7 +117,7 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
 
   const clients = new Set<ServerWebSocket<WSData>>();
   let activeQuery: Query | null = null;
-  let currentSessionId: string | null = null;
+  let currentSessionId: string | null = qOpts.resume ?? null;
   const pendingRequests = new Map<string, PendingRequest>();
   const pendingQuestions = new Map<string, PendingQuestion>();
 
@@ -423,7 +424,10 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
       // Serve static frontend files if a static directory is configured
       if (staticDir) {
         let filePath = url.pathname === "/" ? "/index.html" : url.pathname;
-        const fullPath = `${staticDir}${filePath}`;
+        const fullPath = resolve(staticDir, '.' + normalize(filePath));
+        if (!fullPath.startsWith(staticDir)) {
+          return new Response("Forbidden", { status: 403 });
+        }
         const file = Bun.file(fullPath);
         if (await file.exists()) {
           const ext = filePath.slice(filePath.lastIndexOf("."));
@@ -433,7 +437,8 @@ export function createGolemServer(options: GolemServerOptions = {}): GolemServer
           });
         }
         // SPA fallback: serve index.html for non-file routes
-        const indexFile = Bun.file(`${staticDir}/index.html`);
+        const indexPath = resolve(staticDir, "index.html");
+        const indexFile = Bun.file(indexPath);
         if (await indexFile.exists()) {
           return new Response(indexFile, {
             headers: { "Content-Type": "text/html" },

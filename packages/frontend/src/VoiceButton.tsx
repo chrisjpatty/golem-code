@@ -1,13 +1,15 @@
 import { useState, useCallback } from "react";
+import type { ConnectionState } from "./useGolemSocket";
 
 type VoiceButtonProps = {
   onPressStart: () => void;
   onPressEnd: () => void;
   transcript?: string;
   panelOpen?: boolean;
+  connectionState?: ConnectionState;
 };
 
-export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = false }: VoiceButtonProps) {
+export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = false, connectionState = "connected" }: VoiceButtonProps) {
   const [pressed, setPressed] = useState(false);
 
   const handleDown = useCallback(() => {
@@ -94,6 +96,25 @@ export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = 
       >
         {pressed ? "..." : "SPEAK"}
       </button>
+      {connectionState !== "connected" && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 10,
+            color: connectionState === "connecting" ? "#aa8833" : "#cc4444",
+          }}
+        >
+          <div style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: connectionState === "connecting" ? "#aa8833" : "#cc4444",
+          }} />
+          {connectionState === "connecting" ? "connecting..." : "disconnected"}
+        </div>
+      )}
     </div>
   );
 }

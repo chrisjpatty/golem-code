@@ -36,10 +36,10 @@ export function useOutputEntries() {
     }
   }, []);
 
-  const addToolResult = useCallback((result: unknown) => {
+  const addToolResult = useCallback((result: unknown, toolName?: string) => {
     setOutputEntries((prev) => [
       ...prev,
-      { kind: "tool-result", text: formatToolResult(result) },
+      { kind: "tool-result", text: formatToolResult(result), toolName },
     ]);
   }, []);
 

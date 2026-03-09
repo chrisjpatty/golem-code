@@ -29,6 +29,24 @@ function nextArg(argv: string[], i: number, flag: string): string {
   return argv[i + 1]!;
 }
 
+function parseIntArg(argv: string[], i: number, flag: string): number {
+  const value = parseInt(nextArg(argv, i, flag), 10);
+  if (isNaN(value)) {
+    console.error(`Error: ${flag} requires an integer value`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function parseFloatArg(argv: string[], i: number, flag: string): number {
+  const value = parseFloat(nextArg(argv, i, flag));
+  if (isNaN(value)) {
+    console.error(`Error: ${flag} requires a numeric value`);
+    process.exit(1);
+  }
+  return value;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {};
   const positional: string[] = [];
@@ -72,12 +90,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
 
       case "--max-turns":
-        result.maxTurns = parseInt(nextArg(argv, i, arg), 10);
+        result.maxTurns = parseIntArg(argv, i, arg);
         i++;
         break;
 
       case "--max-budget-usd":
-        result.maxBudgetUsd = parseFloat(nextArg(argv, i, arg));
+        result.maxBudgetUsd = parseFloatArg(argv, i, arg);
         i++;
         break;
 
@@ -119,7 +137,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
 
       case "--port":
-        result.port = parseInt(nextArg(argv, i, arg), 10);
+        result.port = parseIntArg(argv, i, arg);
         i++;
         break;
 
@@ -150,6 +168,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
   // First positional argument is the prompt (like Claude Code)
   if (positional.length > 0 && !result.prompt) {
     result.prompt = positional.join(" ");
+  }
+
+  if (result.continue && result.resume) {
+    console.error("Error: --continue and --resume cannot be used together");
+    process.exit(1);
   }
 
   return result;

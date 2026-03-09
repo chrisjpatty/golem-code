@@ -15,6 +15,8 @@ import { useAudioPlayback } from "./audio/useAudioPlayback";
 import { useStreamingBuffers } from "./hooks/useStreamingBuffers";
 import { useSubagentManager } from "./hooks/useSubagentManager";
 import { usePermissions } from "./hooks/usePermissions";
+import { useQuestions } from "./hooks/useQuestions";
+import { useChatInput } from "./hooks/useChatInput";
 import { useOutputEntries } from "./hooks/useOutputEntries";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
 
@@ -23,6 +25,7 @@ export function App() {
   const [transcript, setTranscript] = useState("");
   const activeToolCount = useRef(0);
   const sendCommandRef = useRef<(cmd: GolemCommand) => void>(undefined);
+  const toolNameMap = useRef(new Map<string, string>());
 
   const [faceSeed, setFaceSeed] = useState<number | undefined>(undefined);
   const [faceColor, setFaceColor] = useState<string | undefined>(undefined);
@@ -32,6 +35,8 @@ export function App() {
   const entries = useOutputEntries();
   const streaming = useStreamingBuffers(entries.setOutputEntries);
   const permissions = usePermissions(sendCommandRef, entries.setOutputEntries);
+  const questions = useQuestions(sendCommandRef, entries.setOutputEntries);
+  const chatInput = useChatInput(sendCommandRef, entries.setOutputEntries);
   const subagents = useSubagentManager();
 
   const { onTtsStart, feedAudioChunk, onTtsEnd } = useAudioPlayback({
@@ -46,6 +51,7 @@ export function App() {
         case "session:init":
           entries.openPanel();
           streaming.resetBuffers();
+          chatInput.handleQueryStart();
           break;
 
         case "text:delta":
@@ -68,11 +74,19 @@ export function App() {
           permissions.handlePermissionRequest(event);
           break;
 
+        case "question:ask":
+          questions.handleQuestionAsk(event);
+          break;
+
         case "tool:start":
           activeToolCount.current++;
           faceRef.current?.startEyeGlow();
           streaming.flushTextBuffer();
           streaming.flushThinkingBuffer();
+          toolNameMap.current.set(event.toolUseId, event.toolName);
+          // AskUserQuestion is handled via the question:ask / question:answer
+          // flow (canUseTool intercept in server.ts), not as a regular tool entry.
+          if (event.toolName === "AskUserQuestion") break;
           if (event.toolName === "Task") {
             subagents.spawnSubagent(
               event.toolUseId,
@@ -82,14 +96,20 @@ export function App() {
           entries.addToolStart(event.toolName, event.input);
           break;
 
-        case "tool:result":
+        case "tool:result": {
           activeToolCount.current = Math.max(0, activeToolCount.current - 1);
           if (activeToolCount.current === 0) {
             faceRef.current?.stopEyeGlow();
           }
           subagents.markRemoving(event.toolUseId);
-          entries.addToolResult(event.result);
+          const toolName = toolNameMap.current.get(event.toolUseId);
+          // AskUserQuestion results are redundant — the QuestionResolvedBlock
+          // already displays the answers in a nicer format.
+          if (toolName !== "AskUserQuestion") {
+            entries.addToolResult(event.result, toolName);
+          }
           break;
+        }
 
         case "tool:summary":
           entries.addToolSummary(event.summary);
@@ -106,12 +126,14 @@ export function App() {
           streaming.flushTextBuffer();
           streaming.flushThinkingBuffer();
           entries.addSessionResult(event);
+          chatInput.handleQueryEnd();
           break;
 
         case "conversation:cleared":
           entries.clearAll();
           subagents.clearAll();
           streaming.resetBuffers();
+          chatInput.clearAll();
           break;
 
         case "tts:start":
@@ -124,10 +146,10 @@ export function App() {
           break;
       }
     },
-    [onTtsStart, onTtsEnd, streaming, entries, permissions, subagents],
+    [onTtsStart, onTtsEnd, streaming, entries, permissions, questions, chatInput, subagents],
   );
 
-  const { sendCommand, getSocket } = useGolemSocket({
+  const { sendCommand, getSocket, connectionState } = useGolemSocket({
     onEvent: handleEvent,
     onAudioChunk: feedAudioChunk,
   });
@@ -202,12 +224,19 @@ export function App() {
         entries={entries.outputEntries}
         onClose={entries.closePanel}
         onPermissionRespond={permissions.handlePermissionRespond}
+        onQuestionRespond={questions.handleQuestionRespond}
+        chatInputText={chatInput.inputText}
+        onChatInputChange={chatInput.setInputText}
+        onChatSend={chatInput.sendMessage}
+        onChatStop={chatInput.stopQuery}
+        queryActive={chatInput.queryActive}
       />
       <VoiceButton
         onPressStart={handleVoiceStart}
         onPressEnd={handleVoiceEnd}
         transcript={transcript}
         panelOpen={entries.panelOpen}
+        connectionState={connectionState}
       />
     </>
   );

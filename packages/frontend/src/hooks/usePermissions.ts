@@ -21,23 +21,33 @@ export function usePermissions(
           requestId: event.requestId,
           decision: "allow",
         });
-        setOutputEntries((prev) => [
-          ...prev,
-          { kind: "permission-request", requestId: event.requestId, toolName: event.toolName, summary, status: "approved" as const },
-        ]);
+        // Don't add a permission-request entry — the ToolStartBlock already
+        // shows the tool name + summary, so adding an "approved" permission
+        // entry just creates a duplicate (matching Claude Code CLI behaviour).
       } else {
-        setOutputEntries((prev) => [
-          ...prev,
-          {
-            kind: "permission-request",
-            requestId: event.requestId,
-            toolName: event.toolName,
-            summary,
-            status: "pending" as const,
-            decisionReason: event.decisionReason,
-            suggestions: event.suggestions,
-          },
-        ]);
+        const permEntry: Extract<OutputEntry, { kind: "permission-request" }> = {
+          kind: "permission-request",
+          requestId: event.requestId,
+          toolName: event.toolName,
+          summary,
+          status: "pending" as const,
+          decisionReason: event.decisionReason,
+          suggestions: event.suggestions,
+        };
+        setOutputEntries((prev) => {
+          // Replace the most recent tool-start entry for this tool so we
+          // don't show a duplicate (tool-start + permission-request).
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const entry = prev[i];
+            if (entry.kind === "tool-start" && entry.toolName === event.toolName) {
+              const next = [...prev];
+              next[i] = permEntry;
+              return next;
+            }
+          }
+          // Fallback: no matching tool-start found (e.g. edit-diff), just append
+          return [...prev, permEntry];
+        });
       }
     },
     [sendCommandRef, setOutputEntries],

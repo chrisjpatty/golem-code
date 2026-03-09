@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { computeLineDiff, type DiffLine } from "./diff";
 import { colors, fonts, fontSizes } from "./theme";
 import type { OutputEntry } from "./types";
-import { summarizeToolInput, formatToolResult } from "./outputUtils";
+import { summarizeToolInput, formatToolResult, COLLAPSED_RESULT_TOOLS } from "./outputUtils";
 
 export type { OutputEntry } from "./types";
 export { summarizeToolInput, formatToolResult } from "./outputUtils";
@@ -15,6 +15,12 @@ type OutputPanelProps = {
   entries: OutputEntry[];
   onClose: () => void;
   onPermissionRespond: (requestId: string, decision: "allow" | "allow-always" | "deny") => void;
+  onQuestionRespond: (requestId: string, answers: Record<string, string>) => void;
+  chatInputText: string;
+  onChatInputChange: (text: string) => void;
+  onChatSend: () => void;
+  onChatStop: () => void;
+  queryActive: boolean;
 };
 
 function SessionInitBlock({ entry }: { entry: Extract<OutputEntry, { kind: "session-init" }> }) {
@@ -30,6 +36,24 @@ function UserMessageBlock({ entry }: { entry: Extract<OutputEntry, { kind: "user
   return (
     <div style={{ color: colors.accent, fontSize: 13, fontFamily: fonts.mono, padding: "10px 0 6px", marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
       &gt; {entry.text}
+    </div>
+  );
+}
+
+function QueuedMessageBlock({ entry }: { entry: Extract<OutputEntry, { kind: "queued-message" }> }) {
+  const statusLabel = entry.status === "queued" ? "(queued)" : entry.status === "sending" ? "(sending...)" : "(cancelled)";
+  return (
+    <div style={{
+      color: colors.accent,
+      fontSize: 13,
+      fontFamily: fonts.mono,
+      padding: "10px 0 6px",
+      marginTop: 8,
+      borderTop: "1px solid rgba(255,255,255,0.05)",
+      opacity: entry.status === "cancelled" ? 0.4 : 1,
+    }}>
+      &gt; {entry.text}{" "}
+      <span style={{ color: colors.textFaint, fontSize: 11 }}>{statusLabel}</span>
     </div>
   );
 }
@@ -233,22 +257,24 @@ function DiffLineRow({ line }: { line: DiffLine }) {
 }
 
 function ToolResultBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool-result" }> }) {
+  const defaultCollapsed = entry.toolName != null && COLLAPSED_RESULT_TOOLS.has(entry.toolName);
   const [expanded, setExpanded] = useState(false);
   const lines = entry.text.split("\n");
   const truncated = lines.length > 10;
-  const displayText = expanded ? entry.text : lines.slice(0, 10).join("\n");
+  const shouldTruncate = truncated || defaultCollapsed;
+  const displayText = expanded ? entry.text : (defaultCollapsed && !expanded ? "" : lines.slice(0, 10).join("\n"));
 
   return (
     <div style={{ padding: "2px 0 6px 13px", borderLeft: "3px solid rgba(255,102,68,0.2)" }}>
       <pre style={{ color: "#777", fontSize: 11, fontFamily: fonts.mono, margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.3, maxHeight: expanded ? "none" : 180, overflow: "hidden" }}>
         {displayText}
       </pre>
-      {truncated && !expanded && (
+      {shouldTruncate && !expanded && (
         <button
           onClick={() => setExpanded(true)}
           style={{ background: "none", border: "none", color: colors.accent, cursor: "pointer", fontFamily: fonts.mono, fontSize: 11, padding: "4px 0 0 0" }}
         >
-          Show more ({lines.length - 10} lines)
+          {defaultCollapsed ? `Show result (${lines.length} lines)` : `Show more (${lines.length - 10} lines)`}
         </button>
       )}
     </div>
@@ -408,6 +434,193 @@ function PermissionFooter({
   );
 }
 
+function QuestionResolvedBlock({
+  entry,
+}: {
+  entry: Extract<OutputEntry, { kind: "question-ask" }>;
+}) {
+  if (entry.status !== "answered") {
+    // Pending entries are rendered in the sticky footer, not inline
+    return null;
+  }
+  return (
+    <div style={{ borderLeft: `3px solid ${colors.accent}`, padding: "6px 0 6px 10px", margin: "4px 0" }}>
+      <span style={{ color: colors.accent, fontWeight: "bold", fontSize: 12 }}>Question</span>
+      <span style={{ color: colors.success, fontSize: 11, marginLeft: 8 }}>&#10003; answered</span>
+      {entry.questions.map((q, i) => (
+        <div key={i} style={{ marginTop: 4 }}>
+          <div style={{ color: colors.textMuted, fontSize: 11, fontFamily: fonts.mono }}>
+            {q.header}: {entry.selectedAnswers?.[q.question] ?? "—"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function QuestionFooter({
+  entry,
+  onRespond,
+}: {
+  entry: Extract<OutputEntry, { kind: "question-ask" }>;
+  onRespond: (requestId: string, answers: Record<string, string>) => void;
+}) {
+  // Per-question state: selected option labels OR custom text (mutually exclusive)
+  const [selections, setSelections] = useState<Record<string, Set<string>>>({});
+  const [customText, setCustomText] = useState<Record<string, string>>({});
+
+  const toggleOption = useCallback((questionText: string, optionLabel: string, multiSelect: boolean) => {
+    // Selecting an option clears custom text for that question
+    setCustomText((prev) => {
+      if (!prev[questionText]) return prev;
+      const next = { ...prev };
+      delete next[questionText];
+      return next;
+    });
+    setSelections((prev) => {
+      const next = { ...prev };
+      const current = new Set(prev[questionText] ?? []);
+      if (multiSelect) {
+        if (current.has(optionLabel)) {
+          current.delete(optionLabel);
+        } else {
+          current.add(optionLabel);
+        }
+      } else {
+        current.clear();
+        current.add(optionLabel);
+      }
+      next[questionText] = current;
+      return next;
+    });
+  }, []);
+
+  const handleCustomTextChange = useCallback((questionText: string, value: string) => {
+    // Typing custom text clears option selections for that question
+    setSelections((prev) => {
+      if (!prev[questionText]?.size) return prev;
+      const next = { ...prev };
+      delete next[questionText];
+      return next;
+    });
+    setCustomText((prev) => ({ ...prev, [questionText]: value }));
+  }, []);
+
+  const allAnswered = entry.questions.every(
+    (q) => (selections[q.question]?.size ?? 0) > 0 || (customText[q.question]?.trim().length ?? 0) > 0,
+  );
+
+  const handleSubmit = useCallback(() => {
+    const answers: Record<string, string> = {};
+    for (const q of entry.questions) {
+      const custom = customText[q.question]?.trim();
+      if (custom) {
+        answers[q.question] = custom;
+      } else {
+        const selected = selections[q.question];
+        answers[q.question] = selected ? Array.from(selected).join(", ") : "";
+      }
+    }
+    onRespond(entry.requestId, answers);
+  }, [entry, selections, customText, onRespond]);
+
+  return (
+    <div style={{
+      flexShrink: 0,
+      borderTop: `1px solid ${colors.border}`,
+      padding: "10px 16px",
+      background: colors.panelBgSolid,
+    }}>
+      <div style={{ borderLeft: `3px solid ${colors.accent}`, padding: "8px 0 8px 10px" }}>
+        <div style={{ fontSize: 12, fontWeight: "bold", color: colors.accent, marginBottom: 8 }}>
+          Question
+        </div>
+        {entry.questions.map((q, qi) => {
+          const hasCustom = (customText[q.question]?.length ?? 0) > 0;
+          return (
+            <div key={qi} style={{ marginBottom: qi < entry.questions.length - 1 ? 12 : 0 }}>
+              <div style={{ fontSize: 13, color: "#fff", marginBottom: 6 }}>
+                {q.question}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {q.options.map((opt, oi) => {
+                  const isSelected = !hasCustom && (selections[q.question]?.has(opt.label) ?? false);
+                  return (
+                    <button
+                      key={oi}
+                      onClick={() => toggleOption(q.question, opt.label, q.multiSelect)}
+                      title={opt.description}
+                      style={{
+                        padding: "5px 12px",
+                        border: isSelected
+                          ? `1px solid ${colors.accent}`
+                          : `1px solid ${colors.borderMedium}`,
+                        borderRadius: 4,
+                        background: isSelected
+                          ? "rgba(255,102,68,0.15)"
+                          : "rgba(255,255,255,0.08)",
+                        color: isSelected ? colors.accent : "#ccc",
+                        fontFamily: fonts.mono,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        fontWeight: isSelected ? "bold" : "normal",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="text"
+                placeholder="Or type your own answer..."
+                value={customText[q.question] ?? ""}
+                onChange={(e) => handleCustomTextChange(q.question, e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && allAnswered) handleSubmit(); }}
+                style={{
+                  marginTop: 6,
+                  width: "100%",
+                  padding: "5px 8px",
+                  border: hasCustom
+                    ? `1px solid ${colors.accent}`
+                    : `1px solid ${colors.borderMedium}`,
+                  borderRadius: 4,
+                  background: "rgba(255,255,255,0.05)",
+                  color: "#ddd",
+                  fontFamily: fonts.mono,
+                  fontSize: 12,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button
+            onClick={handleSubmit}
+            disabled={!allAnswered}
+            style={{
+              padding: "5px 14px",
+              border: "none",
+              borderRadius: 4,
+              background: allAnswered ? colors.accent : "rgba(255,255,255,0.1)",
+              color: allAnswered ? "#fff" : colors.textFaint,
+              fontFamily: fonts.mono,
+              fontSize: 12,
+              fontWeight: "bold",
+              cursor: allAnswered ? "pointer" : "default",
+              opacity: allAnswered ? 1 : 0.5,
+            }}
+          >
+            Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ToolSummaryBlock({ entry }: { entry: Extract<OutputEntry, { kind: "tool-summary" }> }) {
   return (
     <div style={{ color: colors.textDim, fontSize: 11, fontFamily: fonts.mono, padding: "4px 0 4px 13px", borderLeft: "3px solid rgba(255,102,68,0.15)", margin: "4px 0", fontStyle: "italic" }}>
@@ -437,6 +650,89 @@ function SessionResultBlock({ entry }: { entry: Extract<OutputEntry, { kind: "se
   );
 }
 
+function ChatInput({
+  text,
+  onChange,
+  onSend,
+  onStop,
+  queryActive,
+  hidden,
+}: {
+  text: string;
+  onChange: (text: string) => void;
+  onSend: () => void;
+  onStop: () => void;
+  queryActive: boolean;
+  hidden: boolean;
+}) {
+  return (
+    <div style={{
+      flexShrink: 0,
+      borderTop: `1px solid ${colors.border}`,
+      padding: "10px 16px",
+      background: colors.panelBgSolid,
+      display: hidden ? "none" : "flex",
+      gap: 8,
+      alignItems: "center",
+    }}>
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") onSend(); }}
+        placeholder="Type a message..."
+        style={{
+          flex: 1,
+          padding: "6px 10px",
+          border: `1px solid ${colors.borderMedium}`,
+          borderRadius: 4,
+          background: "rgba(255,255,255,0.05)",
+          color: "#ddd",
+          fontFamily: fonts.mono,
+          fontSize: 13,
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      <button
+        onClick={onSend}
+        style={{
+          padding: "6px 14px",
+          border: "none",
+          borderRadius: 4,
+          background: colors.accent,
+          color: "#fff",
+          fontFamily: fonts.mono,
+          fontSize: 12,
+          fontWeight: "bold",
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        Send
+      </button>
+      {queryActive && (
+        <button
+          onClick={onStop}
+          style={{
+            padding: "6px 14px",
+            border: `1px solid ${colors.borderMedium}`,
+            borderRadius: 4,
+            background: "rgba(255,255,255,0.08)",
+            color: "#ccc",
+            fontFamily: fonts.mono,
+            fontSize: 12,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          Stop
+        </button>
+      )}
+    </div>
+  );
+}
+
 function EntryRenderer({ entry }: { entry: OutputEntry }) {
   switch (entry.kind) {
     case "session-init":
@@ -455,6 +751,10 @@ function EntryRenderer({ entry }: { entry: OutputEntry }) {
       return <ToolResultBlock entry={entry} />;
     case "permission-request":
       return <PermissionResolvedBlock entry={entry} />;
+    case "question-ask":
+      return <QuestionResolvedBlock entry={entry} />;
+    case "queued-message":
+      return <QueuedMessageBlock entry={entry} />;
     case "tool-summary":
       return <ToolSummaryBlock entry={entry} />;
     case "status-update":
@@ -464,7 +764,7 @@ function EntryRenderer({ entry }: { entry: OutputEntry }) {
   }
 }
 
-export function OutputPanel({ open, entries, onClose, onPermissionRespond }: OutputPanelProps) {
+export function OutputPanel({ open, entries, onClose, onPermissionRespond, onQuestionRespond, chatInputText, onChatInputChange, onChatSend, onChatStop, queryActive }: OutputPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
 
@@ -479,6 +779,16 @@ export function OutputPanel({ open, entries, onClose, onPermissionRespond }: Out
       }
     }
     return { activePermission: active, pendingPermissionCount: count };
+  }, [entries]);
+
+  // Find the first pending question for the sticky footer
+  const activeQuestion = useMemo(() => {
+    for (const entry of entries) {
+      if (entry.kind === "question-ask" && entry.status === "pending") {
+        return entry;
+      }
+    }
+    return null;
   }, [entries]);
 
   const virtualizer = useVirtualizer({
@@ -598,6 +908,24 @@ export function OutputPanel({ open, entries, onClose, onPermissionRespond }: Out
             onRespond={onPermissionRespond}
           />
         )}
+
+        {/* Sticky question footer */}
+        {activeQuestion && (
+          <QuestionFooter
+            entry={activeQuestion}
+            onRespond={onQuestionRespond}
+          />
+        )}
+
+        {/* Chat input - always mounted, hidden when permission/question footers are visible */}
+        <ChatInput
+          text={chatInputText}
+          onChange={onChatInputChange}
+          onSend={onChatSend}
+          onStop={onChatStop}
+          queryActive={queryActive}
+          hidden={!!activePermission || !!activeQuestion}
+        />
       </div>
   );
 }

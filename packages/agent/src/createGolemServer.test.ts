@@ -14,8 +14,9 @@ mock.module("./stt", () => ({
 const { createGolemServer } = await import("./server");
 type GolemServer = Awaited<ReturnType<typeof createGolemServer>>;
 
-// Use high random ports to avoid conflicts with the subprocess-based server.test.ts
-const getPort = () => 4800 + Math.floor(Math.random() * 100);
+// Use a counter for unique ports to avoid conflicts between tests and with the subprocess-based server.test.ts
+let portCounter = 4800;
+const getPort = () => portCounter++;
 
 function connectWS(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -269,11 +270,10 @@ describe("static file serving", () => {
 
   test("serves index.html at root when staticDir is set", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/`);
+      const res = await fetch(`http://localhost:${server.port}/`);
       expect(res.ok).toBe(true);
       const text = await res.text();
       expect(text).toContain("Golem Test");
@@ -285,11 +285,10 @@ describe("static file serving", () => {
 
   test("serves JS files with correct content type", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/assets/app.js`);
+      const res = await fetch(`http://localhost:${server.port}/assets/app.js`);
       expect(res.ok).toBe(true);
       const text = await res.text();
       expect(text).toBe("console.log('test');");
@@ -301,11 +300,10 @@ describe("static file serving", () => {
 
   test("serves CSS files with correct content type", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/assets/style.css`);
+      const res = await fetch(`http://localhost:${server.port}/assets/style.css`);
       expect(res.ok).toBe(true);
       expect(res.headers.get("content-type")).toBe("text/css");
     } finally {
@@ -315,11 +313,10 @@ describe("static file serving", () => {
 
   test("serves JSON files with correct content type", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/data.json`);
+      const res = await fetch(`http://localhost:${server.port}/data.json`);
       expect(res.ok).toBe(true);
       const body = await res.json();
       expect(body).toEqual({ key: "value" });
@@ -331,11 +328,10 @@ describe("static file serving", () => {
 
   test("SPA fallback serves index.html for unknown routes", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/some/deep/route`);
+      const res = await fetch(`http://localhost:${server.port}/some/deep/route`);
       expect(res.ok).toBe(true);
       const text = await res.text();
       expect(text).toContain("Golem Test");
@@ -345,13 +341,36 @@ describe("static file serving", () => {
     }
   });
 
-  test("health endpoint still works with staticDir", async () => {
-    const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+  test("does not serve files outside the static directory", async () => {
+    // Create a parent with a secret file, and a child static dir
+    const parentDir = join(tmpdir(), `golem-test-parent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const childStaticDir = join(parentDir, "static");
+    mkdirSync(childStaticDir, { recursive: true });
+    writeFileSync(join(childStaticDir, "index.html"), "<html><body>Safe</body></html>");
+    writeFileSync(join(parentDir, "secret.txt"), "TOP SECRET DATA");
+
+    server = createGolemServer({ port: getPort(), staticDir: childStaticDir });
 
     try {
-      const res = await fetch(`http://localhost:${port}/health`);
+      // Bun normalizes /../secret.txt to /secret.txt — the server should not
+      // find it in the static dir and should fall back to SPA index.html
+      const res = await fetch(`http://localhost:${server.port}/secret.txt`);
+      expect(res.ok).toBe(true);
+      const text = await res.text();
+      // Should get the SPA fallback, NOT the secret file
+      expect(text).toContain("Safe");
+      expect(text).not.toContain("TOP SECRET");
+    } finally {
+      try { rmSync(parentDir, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  test("health endpoint still works with staticDir", async () => {
+    const dir = setupStaticDir();
+    server = createGolemServer({ port: getPort(), staticDir: dir });
+
+    try {
+      const res = await fetch(`http://localhost:${server.port}/health`);
       expect(res.ok).toBe(true);
       const body = await res.json();
       expect(body.status).toBe("ok");
@@ -362,11 +381,10 @@ describe("static file serving", () => {
 
   test("WebSocket still works with staticDir", async () => {
     const dir = setupStaticDir();
-    const port = getPort();
-    server = createGolemServer({ port, staticDir: dir });
+    server = createGolemServer({ port: getPort(), staticDir: dir });
 
     try {
-      const ws = await connectWS(port);
+      const ws = await connectWS(server.port);
       await new Promise((r) => setTimeout(r, 50));
       expect(server.getState().clients).toBe(1);
       ws.close();
@@ -376,10 +394,9 @@ describe("static file serving", () => {
   });
 
   test("without staticDir, root returns plain text", async () => {
-    const port = getPort();
-    server = createGolemServer({ port });
+    server = createGolemServer({ port: getPort() });
 
-    const res = await fetch(`http://localhost:${port}/`);
+    const res = await fetch(`http://localhost:${server.port}/`);
     const text = await res.text();
     expect(text).toBe("golem-code agent server");
   });

@@ -62,13 +62,20 @@ async function main() {
   }
 
   if (args.version) {
-    console.log("summon (golem-code) 0.0.1");
+    const pkg = await import("../package.json");
+    console.log(`summon (golem-code) ${pkg.version}`);
     process.exit(0);
   }
 
   // Build frontend if dist doesn't exist
   if (!args.dev && !existsSync(join(FRONTEND_DIST, "index.html"))) {
     await buildFrontend();
+  }
+
+  // Verify frontend is available after build attempt
+  if (!args.dev && !existsSync(join(FRONTEND_DIST, "index.html"))) {
+    console.error(`[summon] Frontend not found at ${FRONTEND_DIST}. Run from the golem-code repo or use --dev mode.`);
+    process.exit(1);
   }
 
   // Resolve working directory
@@ -136,7 +143,7 @@ Usage:
 Options:
   -p, --prompt <text>           Initial prompt to send
   -m, --model <model>           Claude model to use
-  --permission-mode <mode>      Permission mode: default, acceptEdits, plan, dontAsk
+  --permission-mode <mode>      Permission mode: default, acceptEdits, bypassPermissions, plan, dontAsk
   --max-turns <n>               Maximum conversation turns
   --max-budget-usd <n>          Maximum budget in USD
   --system-prompt <text>        Custom system prompt

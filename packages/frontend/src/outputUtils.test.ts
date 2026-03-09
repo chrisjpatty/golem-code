@@ -74,17 +74,32 @@ describe("formatToolResult", () => {
     expect(formatToolResult(blocks)).toBe("line one\nline two");
   });
 
-  test("content block array ignores non-text blocks", () => {
+  test("content block array shows placeholder for non-text blocks", () => {
     const blocks = [
       { type: "image", url: "https://example.com/img.png" },
       { type: "text", text: "visible" },
     ];
-    expect(formatToolResult(blocks)).toBe("visible");
+    expect(formatToolResult(blocks)).toBe("[image]\nvisible");
   });
 
-  test("array with no text blocks falls through to JSON", () => {
+  test("array with no text blocks shows placeholders", () => {
     const blocks = [{ type: "image", url: "x" }];
-    expect(formatToolResult(blocks)).toBe(JSON.stringify(blocks, null, 2));
+    expect(formatToolResult(blocks)).toBe("[image]");
+  });
+
+  test("tool_use_error XML tags are cleaned", () => {
+    expect(formatToolResult("<tool_use_error>Sibling tool call errored</tool_use_error>")).toBe(
+      "Error: Sibling tool call errored",
+    );
+  });
+
+  test("generic XML wrapper tags are stripped", () => {
+    expect(formatToolResult("<result>some content</result>")).toBe("some content");
+  });
+
+  test("tool_result content block recurses", () => {
+    const block = { type: "tool_result", content: [{ type: "text", text: "inner" }] };
+    expect(formatToolResult([block])).toBe("inner");
   });
 
   test("object is JSON-stringified", () => {

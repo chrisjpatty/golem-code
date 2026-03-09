@@ -1,5 +1,16 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { parseArgs } from "./args";
+
+// Mock process.exit to throw instead of terminating the process
+const originalExit = process.exit;
+function mockProcessExit() {
+  process.exit = ((code?: number) => {
+    throw new Error(`process.exit(${code})`);
+  }) as never;
+}
+function restoreProcessExit() {
+  process.exit = originalExit;
+}
 
 describe("parseArgs", () => {
   // -- Help & version flags --
@@ -194,5 +205,45 @@ describe("parseArgs", () => {
     expect("noOpen" in result).toBe(false);
     expect("dev" in result).toBe(false);
     expect("model" in result).toBe(false);
+  });
+
+  // -- NaN validation --
+
+  test("--max-turns rejects non-integer value", () => {
+    mockProcessExit();
+    try {
+      expect(() => parseArgs(["--max-turns", "foo"])).toThrow();
+    } finally {
+      restoreProcessExit();
+    }
+  });
+
+  test("--port rejects non-integer value", () => {
+    mockProcessExit();
+    try {
+      expect(() => parseArgs(["--port", "abc"])).toThrow();
+    } finally {
+      restoreProcessExit();
+    }
+  });
+
+  test("--max-budget-usd rejects non-numeric value", () => {
+    mockProcessExit();
+    try {
+      expect(() => parseArgs(["--max-budget-usd", "xyz"])).toThrow();
+    } finally {
+      restoreProcessExit();
+    }
+  });
+
+  // -- Mutual exclusivity --
+
+  test("--continue and --resume cannot be used together", () => {
+    mockProcessExit();
+    try {
+      expect(() => parseArgs(["--continue", "--resume", "abc-123"])).toThrow();
+    } finally {
+      restoreProcessExit();
+    }
   });
 });
