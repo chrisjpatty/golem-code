@@ -1,26 +1,6 @@
-# Summon
+# golem-code
 
-A 3D animated companion overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Summon renders a procedurally generated golem face in a floating native window that reacts in real-time to your coding agent's activity — tool calls, subagent spawns, permission requests, and more.
-
-Use Claude Code like you normally would. Summon just gives it a face.
-
-## What it does
-
-When you run `summon` instead of `claude`, you get the full Claude Code experience in your terminal plus a floating 3D face overlay that visually reflects what the agent is doing:
-
-- **Eyes glow** when the agent is actively thinking
-- **Smiles** during tool use (file edits, bash commands, searches)
-- **Opens mouth** when waiting for your permission to proceed
-- **Spawns smaller faces** when the agent launches subagents
-- **Goes dark** when idle, waiting for your next prompt
-
-Each agent gets a unique procedurally generated face based on its session ID — no two look alike.
-
-### Multi-instance support
-
-Run multiple `summon` sessions and they automatically discover each other. The first instance becomes the primary and hosts the overlay. Additional instances connect as peers, and their faces appear alongside the first in the same overlay window — each with a distinct color.
-
-Click any face in the overlay to focus that agent's terminal window.
+Summon [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as an embodied avatar that follows you around your computer so you can always keep tabs on your running Claude Code instances. golem-code renders a procedurally generated agent avater in a floating native window that reacts in real-time to your coding agent's activity — tool calls, subagent spawns, permission requests, and more. If we're going to summon the beast we may as well give it a face.
 
 ## Requirements
 
@@ -28,6 +8,10 @@ Click any face in the overlay to focus that agent's terminal window.
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and configured
 
 ## Installation
+
+golem-code works as a combination of a wrapper CLI around claude code, and a claude code plugin.
+
+### 1. First, install the CLI:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chrisjpatty/golem-code/main/install.sh | sh
@@ -39,7 +23,7 @@ This downloads the latest `summon` binary for your Mac and installs it to `/usr/
 SUMMON_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/chrisjpatty/golem-code/main/install.sh | sh
 ```
 
-### Install the Claude Code plugin
+### 2. Install the Claude Code plugin
 
 After installing the binary, open Claude Code and install the plugin:
 
@@ -49,6 +33,12 @@ After installing the binary, open Claude Code and install the plugin:
 ```
 
 This registers the hooks that let Summon see what Claude Code is doing. You only need to do this once.
+
+### 3. Close claude code and start golem-code
+
+```bash
+summon
+```
 
 ### Updating
 
@@ -60,7 +50,7 @@ This downloads the latest release and replaces the current binary in-place.
 
 ## Usage
 
-Summon is a drop-in wrapper for Claude Code. Use it exactly as you would use `claude`:
+`summon` is a drop-in wrapper for Claude Code. Use it exactly as you would use `claude`:
 
 ```bash
 # Start a new session
@@ -111,21 +101,7 @@ Summon sits between you and Claude Code:
 1. **Spawns Claude Code** in a PTY (pseudo-terminal), so your terminal experience is unchanged
 2. **Runs an HTTP/WebSocket server** that receives hook events from a bundled Claude Code plugin
 3. **Launches a native overlay window** (Tauri/Rust) that renders the 3D face via a WebGL frontend
-4. **Translates hook events into facial expressions** — tool starts trigger smiles, permission requests trigger the "oh" face, idle triggers eyes-off
-
-The overlay window is fully transparent and click-through by default. It only captures mouse events when your cursor is directly over a face, allowing you to click faces to focus their terminal or drag to reposition the overlay.
-
-### Event flow
-
-| Claude Code event | Golem face behavior |
-|---|---|
-| User sends prompt | Eyes glow on |
-| Tool starts (file edit, bash, etc.) | Mouth smiles |
-| Tool finishes | Mouth returns to neutral |
-| Permission requested | Mouth opens "oh", environment dims |
-| Subagent spawned | Small child face appears, wanders nearby |
-| Subagent finishes | Child face fades out |
-| Turn ends (agent idle) | Eyes glow off, neutral expression |
+4. **Translates hook events into facial expressions**
 
 ### Peer discovery
 
