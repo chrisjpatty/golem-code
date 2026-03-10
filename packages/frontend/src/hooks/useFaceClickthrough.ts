@@ -5,6 +5,10 @@
  * (hit testing happens in Rust). When click-through is off, the webview
  * receives mouse events. This hook detects clicks on face positions and
  * triggers the onFaceClick callback, and tracks hover state.
+ *
+ * Dragging the overlay window is handled entirely in Rust (CoreGraphics
+ * mousedown + movement detection). The frontend only needs to suppress
+ * clicks when a drag occurred (detected by movement threshold).
  */
 
 import { useEffect, useRef, useCallback } from "react";
@@ -19,6 +23,9 @@ type FaceTarget = {
 
 /** Screen-space hit radius in CSS pixels — generous to account for bobbing */
 const HIT_RADIUS = 55;
+
+/** Movement threshold to suppress click when Rust initiated a drag */
+const DRAG_THRESHOLD = 5;
 
 export function useFaceClickthrough(
   onFaceClick: (agentId: string) => void,
@@ -75,42 +82,83 @@ export function useFaceClickthrough(
     [onHoverChange],
   );
 
-  // When the overlay disables click-through (cursor is over a face),
-  // the webview receives mouse events. Handle clicks and cursor style.
   useEffect(() => {
     const canvas = gl.domElement;
+
+    // Track mousedown position to distinguish click from drag
+    let mouseDownPos: { x: number; y: number } | null = null;
+    let mouseDownHit: string | null = null;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hit = hitTest(x, y);
+      if (hit) {
+        mouseDownPos = { x: e.clientX, y: e.clientY };
+        mouseDownHit = hit;
+      }
+    };
 
     const onMouseMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const hit = hitTest(x, y);
-      canvas.style.cursor = hit ? "pointer" : "";
+
+      // Show grabbing cursor when dragging (Rust is moving the window)
+      if (mouseDownPos) {
+        const dx = e.clientX - mouseDownPos.x;
+        const dy = e.clientY - mouseDownPos.y;
+        if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+          canvas.style.cursor = "grabbing";
+          return;
+        }
+      }
+
+      canvas.style.cursor = hit ? "grab" : "";
       setHovered(hit);
     };
 
-    const onClick = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const hit = hitTest(x, y);
-      if (hit) {
-        onFaceClick(hit);
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+
+      // Only fire click if cursor didn't move (drag was handled by Rust)
+      if (mouseDownPos && mouseDownHit) {
+        const dx = e.clientX - mouseDownPos.x;
+        const dy = e.clientY - mouseDownPos.y;
+        if (dx * dx + dy * dy <= DRAG_THRESHOLD * DRAG_THRESHOLD) {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          const hit = hitTest(x, y);
+          if (hit && hit === mouseDownHit) {
+            onFaceClick(hit);
+          }
+        }
       }
+
+      mouseDownPos = null;
+      mouseDownHit = null;
+      canvas.style.cursor = "";
     };
 
     const onMouseLeave = () => {
       canvas.style.cursor = "";
       setHovered(null);
+      // Don't clear mouseDown state — Rust handles drag even outside window
     };
 
+    canvas.addEventListener("mousedown", onMouseDown);
     canvas.addEventListener("mousemove", onMouseMove);
-    canvas.addEventListener("click", onClick);
+    canvas.addEventListener("mouseup", onMouseUp);
     canvas.addEventListener("mouseleave", onMouseLeave);
 
     return () => {
+      canvas.removeEventListener("mousedown", onMouseDown);
       canvas.removeEventListener("mousemove", onMouseMove);
-      canvas.removeEventListener("click", onClick);
+      canvas.removeEventListener("mouseup", onMouseUp);
       canvas.removeEventListener("mouseleave", onMouseLeave);
     };
   }, [gl, hitTest, setHovered, onFaceClick]);

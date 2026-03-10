@@ -16,6 +16,9 @@ const HIT_RADIUS_X: f64 = 60.0;
 const HIT_RADIUS_Y: f64 = 75.0; // 60 * 1.25 — taller oval
 const HIT_Y_OFFSET: f64 = -4.0; // shift center up by 4px
 
+/// Movement threshold in screen points to distinguish click from drag
+const DRAG_THRESHOLD: f64 = 5.0;
+
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
     panel!(OverlayPanel {
@@ -37,10 +40,19 @@ mod cursor {
         pub y: f64,
     }
 
+    type CGEventSourceStateID = i32;
+    type CGMouseButton = u32;
+    // Use combined session state (includes all event sources)
+    const KCGEVENTSOURCESTATECOMBINEDSESSIONSTATE: CGEventSourceStateID = 0;
+
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
         fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
+        fn CGEventSourceButtonState(
+            state_id: CGEventSourceStateID,
+            button: CGMouseButton,
+        ) -> u8; // Returns Boolean (unsigned char), not _Bool
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -58,6 +70,13 @@ mod cursor {
             let point = CGEventGetLocation(event);
             CFRelease(event);
             (point.x, point.y)
+        }
+    }
+
+    /// Returns true if the left mouse button is currently pressed.
+    pub fn is_mouse_button_down() -> bool {
+        unsafe {
+            CGEventSourceButtonState(KCGEVENTSOURCESTATECOMBINEDSESSIONSTATE, 0) != 0
         }
     }
 }
@@ -193,8 +212,10 @@ fn main() {
                 ));
             }
 
-            // Spawn cursor tracking thread — handles hit testing and
-            // click-through toggling entirely from the Rust side.
+            // Spawn cursor tracking thread — handles hit testing,
+            // click-through toggling, and drag-to-move entirely from Rust.
+            // Drag is detected via CoreGraphics: mousedown over face + movement
+            // beyond threshold = drag. No frontend IPC needed.
             #[cfg(target_os = "macos")]
             {
                 let win = window.clone();
@@ -204,12 +225,19 @@ fn main() {
                     let mut face_positions = compute_face_positions(agent_count);
                     let mut poll_counter: u32 = 0;
 
+                    // Drag state machine (all tracked in this thread)
+                    // Phase 1: mouse pressed over face → pending drag
+                    // Phase 2: cursor moved > threshold → active drag
+                    let mut pending_drag: Option<(f64, f64)> = None; // cursor pos at mousedown
+                    let mut active_drag: Option<((f64, f64), (f64, f64))> = None; // (start_cursor, start_window)
+                    let mut was_button_down = false;
+
                     loop {
-                        std::thread::sleep(std::time::Duration::from_millis(32));
+                        std::thread::sleep(std::time::Duration::from_millis(16));
                         poll_counter += 1;
 
                         // Refresh agent count every ~2 seconds
-                        if poll_counter % 60 == 0 {
+                        if poll_counter % 120 == 0 {
                             let new_count = query_agent_count(server_port);
                             if new_count != agent_count {
                                 agent_count = new_count;
@@ -218,8 +246,60 @@ fn main() {
                         }
 
                         let (cx, cy) = cursor::get_position();
+                        let button_down = cursor::is_mouse_button_down();
+                        let button_just_pressed = button_down && !was_button_down;
+                        let button_just_released = !button_down && was_button_down;
+                        was_button_down = button_down;
 
-                        // Get window position in logical points
+                        // --- Handle active drag ---
+                        if let Some((start_cursor, start_window)) = active_drag {
+                            let dx = cx - start_cursor.0;
+                            let dy = cy - start_cursor.1;
+                            let _ = win.set_position(tauri::Position::Logical(
+                                tauri::LogicalPosition::new(
+                                    start_window.0 + dx,
+                                    start_window.1 + dy,
+                                ),
+                            ));
+
+                            if !clickthrough_off {
+                                let _ = win.set_ignore_cursor_events(false);
+                                clickthrough_off = true;
+                            }
+
+                            if button_just_released {
+                                active_drag = None;
+                            }
+                            continue;
+                        }
+
+                        // --- Handle pending drag (button held, checking threshold) ---
+                        if let Some((start_x, start_y)) = pending_drag {
+                            if button_just_released {
+                                // Released before threshold — was a click, not a drag
+                                pending_drag = None;
+                            } else if button_down {
+                                let dx = cx - start_x;
+                                let dy = cy - start_y;
+                                if dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD {
+                                    // Exceeded threshold — start dragging
+                                    let (wx, wy) = match win.outer_position() {
+                                        Ok(pos) => {
+                                            let scale = win.scale_factor().unwrap_or(1.0);
+                                            (pos.x as f64 / scale, pos.y as f64 / scale)
+                                        }
+                                        Err(_) => continue,
+                                    };
+                                    active_drag = Some(((start_x, start_y), (wx, wy)));
+                                    pending_drag = None;
+                                }
+                            } else {
+                                pending_drag = None;
+                            }
+                            continue;
+                        }
+
+                        // --- Normal hit testing ---
                         let (wx, wy) = match win.outer_position() {
                             Ok(pos) => {
                                 let scale = win.scale_factor().unwrap_or(1.0);
@@ -228,11 +308,9 @@ fn main() {
                             Err(_) => continue,
                         };
 
-                        // Cursor position relative to window (in CSS pixels)
                         let local_x = cx - wx;
                         let local_y = cy - wy;
 
-                        // Check if cursor is within window bounds
                         if local_x < 0.0 || local_x > WIN_WIDTH
                             || local_y < 0.0 || local_y > WIN_HEIGHT
                         {
@@ -243,7 +321,6 @@ fn main() {
                             continue;
                         }
 
-                        // Hit test against face positions (ellipse)
                         let mut over_face = false;
                         for &(fx, fy) in &face_positions {
                             let dx = (local_x - fx) / HIT_RADIUS_X;
@@ -252,6 +329,11 @@ fn main() {
                                 over_face = true;
                                 break;
                             }
+                        }
+
+                        // Detect mousedown on face → start pending drag
+                        if over_face && button_just_pressed {
+                            pending_drag = Some((cx, cy));
                         }
 
                         if over_face && !clickthrough_off {
