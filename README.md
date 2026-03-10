@@ -2,8 +2,12 @@
   <img src="golem-logo.png" alt="Summon" width="156" />
 </p>
 
-<h1 align="center">golem-code</h1>
-<p align="center">If we're going to summon the beast we may as well give it a face.</p>
+<div align="center">
+  <h2>Golem Code</h2>
+  <i>If we're going to summon the beast we may as well give it a face.</i>
+</div>
+
+<hr/>
 
 Summon [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as an embodied avatar that follows you around your computer so you can always keep tabs on your running Claude Code instances. golem-code renders a procedurally generated agent avater in a floating native window that reacts in real-time to your coding agent's activity — tool calls, subagent spawns, permission requests, and more. 
 
