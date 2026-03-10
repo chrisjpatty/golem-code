@@ -34,6 +34,8 @@ type SubagentFaceProps = {
   targetScale: number;
   removing?: boolean;
   onRemoved?: () => void;
+  /** Override viewport width for wander bounds (used in multi-agent layout) */
+  boundsWidth?: number;
 };
 
 const BASE_SCALE = 0.27;
@@ -42,7 +44,7 @@ const BASE_REPULSE_STRENGTH = 0.6;
 /** Fraction of viewport to use as padding on each edge */
 const PADDING = 0.08;
 
-export function SubagentFace({ subagent, panelOpen = false, positions, targetScale, removing, onRemoved }: SubagentFaceProps) {
+export function SubagentFace({ subagent, panelOpen = false, positions, targetScale, removing, onRemoved, boundsWidth }: SubagentFaceProps) {
   const groupRef = useRef<THREE.Group>(null);
   const faceRef = useRef<GolemFaceHandle>(null);
   const scaleRef = useRef(0);
@@ -97,7 +99,7 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
     groupRef.current.scale.set(s, s, s);
 
     // Compute and smoothly damp wander bounds based on viewport and panel state
-    const vw = viewport.width;
+    const vw = boundsWidth ?? viewport.width;
     const vh = viewport.height;
     const padX = vw * PADDING;
     const padY = vh * PADDING;

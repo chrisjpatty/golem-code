@@ -1,39 +1,46 @@
 /**
  * Golem events — minimal protocol for the ambient companion.
- * The frontend observes Claude Code via JSONL session file tailing.
+ * All events carry an agentId so the frontend can route them
+ * to the correct face in multi-instance setups.
  */
 
 // -- Server → Client events --
 
 export type GolemToolStart = {
   type: "tool:start";
+  agentId: string;
   toolUseId: string;
   toolName: string;
 };
 
 export type GolemToolEnd = {
   type: "tool:end";
+  agentId: string;
   toolUseId: string;
 };
 
 export type GolemSubagentStart = {
   type: "subagent:start";
+  agentId: string;
   toolUseId: string;
   description: string;
 };
 
 export type GolemSubagentEnd = {
   type: "subagent:end";
+  agentId: string;
   toolUseId: string;
 };
 
 export type GolemActivity = {
   type: "activity";
+  agentId: string;
   state: "active" | "idle";
 };
 
 export type GolemTurnEnd = {
   type: "turn:end";
+  agentId: string;
 };
 
 export type GolemAgentInit = {
@@ -43,6 +50,11 @@ export type GolemAgentInit = {
   color: string;
 };
 
+export type GolemAgentDisconnect = {
+  type: "agent:disconnect";
+  agentId: string;
+};
+
 export type GolemEvent =
   | GolemToolStart
   | GolemToolEnd
@@ -50,7 +62,8 @@ export type GolemEvent =
   | GolemSubagentEnd
   | GolemActivity
   | GolemTurnEnd
-  | GolemAgentInit;
+  | GolemAgentInit
+  | GolemAgentDisconnect;
 
 // -- Client → Server commands --
 

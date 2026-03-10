@@ -14,11 +14,12 @@ import type { GolemEvent } from "@golem-code/types";
 const SUBAGENT_TOOL_NAME = "Task";
 
 export type HookTransformOptions = {
+  agentId: string;
   onEvent: (event: GolemEvent) => void;
 };
 
 export function createHookTransform(options: HookTransformOptions) {
-  const { onEvent } = options;
+  const { agentId, onEvent } = options;
 
   // Track tool IDs so we can pair PreToolUse with PostToolUse.
   // Hook events don't have a toolUseId, so we generate one per PreToolUse
@@ -49,18 +50,20 @@ export function createHookTransform(options: HookTransformOptions) {
                 : "";
           onEvent({
             type: "subagent:start",
+            agentId,
             toolUseId,
             description,
           });
         } else {
           onEvent({
             type: "tool:start",
+            agentId,
             toolUseId,
             toolName,
           });
         }
 
-        onEvent({ type: "activity", state: "active" });
+        onEvent({ type: "activity", agentId, state: "active" });
         break;
       }
 
@@ -72,34 +75,35 @@ export function createHookTransform(options: HookTransformOptions) {
         if (queue?.length === 0) pendingTools.delete(toolName);
 
         if (toolName === SUBAGENT_TOOL_NAME || toolName === "Agent") {
-          onEvent({ type: "subagent:end", toolUseId });
+          onEvent({ type: "subagent:end", agentId, toolUseId });
         } else {
-          onEvent({ type: "tool:end", toolUseId });
+          onEvent({ type: "tool:end", agentId, toolUseId });
         }
         break;
       }
 
       case "SubagentStart": {
-        const agentId = data.agent_id as string;
+        const subagentId = data.agent_id as string;
         const agentType = (data.agent_type as string) ?? "";
         onEvent({
           type: "subagent:start",
-          toolUseId: agentId,
+          agentId,
+          toolUseId: subagentId,
           description: agentType,
         });
-        onEvent({ type: "activity", state: "active" });
+        onEvent({ type: "activity", agentId, state: "active" });
         break;
       }
 
       case "SubagentStop": {
-        const agentId = data.agent_id as string;
-        onEvent({ type: "subagent:end", toolUseId: agentId });
+        const subagentId = data.agent_id as string;
+        onEvent({ type: "subagent:end", agentId, toolUseId: subagentId });
         break;
       }
 
       case "Stop": {
-        onEvent({ type: "turn:end" });
-        onEvent({ type: "activity", state: "idle" });
+        onEvent({ type: "turn:end", agentId });
+        onEvent({ type: "activity", agentId, state: "idle" });
         break;
       }
     }

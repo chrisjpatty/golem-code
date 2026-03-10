@@ -1,0 +1,16 @@
+[package]
+name = "golem-overlay"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+
+[build-dependencies]
+tauri-build = "2"

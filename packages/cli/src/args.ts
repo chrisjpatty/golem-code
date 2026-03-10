@@ -6,6 +6,7 @@ export type ParsedArgs = {
   port?: number;
   noOpen?: boolean;
   dev?: boolean;
+  overlay?: boolean;
   version?: boolean;
   help?: boolean;
   /** Everything after -- is forwarded to Claude as-is */
@@ -87,6 +88,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
       case "--dev":
         result.dev = true;
+        break;
+
+      case "--overlay":
+        result.overlay = true;
         break;
 
       default:

@@ -1,13 +1,16 @@
 /**
  * Side-channel server: Bun WebSocket server that broadcasts GolemEvents
  * from the JSONL watcher to browser clients and receives inject commands.
+ *
+ * Supports multi-instance: peer CLI instances connect via /peer WebSocket
+ * and forward their events, which get rebroadcast to all frontend clients.
  */
 
 import type { ServerWebSocket } from "bun";
 import { resolve, normalize } from "path";
 import type { GolemEvent, GolemCommand, GolemAgentInit } from "@golem-code/types";
 
-type WSData = { id: string };
+type WSData = { id: string; role: "client" | "peer" };
 
 /** Embedded asset entry — data is a Buffer, served from memory */
 export type EmbeddedAsset = { data: Buffer; size: number };
@@ -20,7 +23,7 @@ export type SideChannelServerOptions = {
   embeddedAssets?: Record<string, EmbeddedAsset>;
   /** Called when a client sends an inject command */
   onInject?: (text: string) => void;
-  /** Agent identity sent to each connecting frontend client */
+  /** Agent identity for this CLI instance */
   agentInit?: GolemAgentInit;
   /** Called when a hook event is received via POST /hook */
   onHookEvent?: (data: Record<string, unknown>) => void;
@@ -65,12 +68,25 @@ export function createSideChannelServer(
   const agentInit = options.agentInit ?? null;
 
   const clients = new Set<ServerWebSocket<WSData>>();
+  const peers = new Set<ServerWebSocket<WSData>>();
 
-  function broadcast(event: GolemEvent) {
+  // Track all known agent inits so new frontend clients get the full state
+  const knownAgents = new Map<string, GolemAgentInit>();
+  if (agentInit) {
+    knownAgents.set(agentInit.agentId, agentInit);
+  }
+
+  /** Broadcast an event to all frontend clients */
+  function broadcastToClients(event: GolemEvent) {
     const json = JSON.stringify(event);
     for (const ws of clients) {
       ws.send(json);
     }
+  }
+
+  /** Broadcast to clients (the public API used by the local hook transform) */
+  function broadcast(event: GolemEvent) {
+    broadcastToClients(event);
   }
 
   function serveEmbedded(pathname: string): Response | null {
@@ -104,9 +120,19 @@ export function createSideChannelServer(
     ) {
       const url = new URL(req.url);
 
+      // Frontend client WebSocket
       if (url.pathname === "/ws") {
         const id = crypto.randomUUID();
-        if (server.upgrade(req, { data: { id } })) {
+        if (server.upgrade(req, { data: { id, role: "client" } })) {
+          return;
+        }
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
+      // Peer CLI WebSocket
+      if (url.pathname === "/peer") {
+        const id = crypto.randomUUID();
+        if (server.upgrade(req, { data: { id, role: "peer" } })) {
           return;
         }
         return new Response("WebSocket upgrade failed", { status: 400 });
@@ -126,6 +152,8 @@ export function createSideChannelServer(
         return Response.json({
           status: "ok",
           clients: clients.size,
+          peers: peers.size,
+          agents: knownAgents.size,
         });
       }
 
@@ -159,9 +187,15 @@ export function createSideChannelServer(
     },
     websocket: {
       open(ws: ServerWebSocket<WSData>) {
+        if (ws.data.role === "peer") {
+          peers.add(ws);
+          return;
+        }
+
+        // Frontend client — send all known agent inits
         clients.add(ws);
-        if (agentInit) {
-          ws.send(JSON.stringify(agentInit));
+        for (const init of knownAgents.values()) {
+          ws.send(JSON.stringify(init));
         }
       },
       message(
@@ -171,7 +205,23 @@ export function createSideChannelServer(
         if (typeof raw !== "string") return;
 
         try {
-          const cmd = JSON.parse(raw) as GolemCommand;
+          const msg = JSON.parse(raw);
+
+          // Peer messages: GolemEvents to rebroadcast
+          if (ws.data.role === "peer") {
+            const event = msg as GolemEvent;
+            // Track agent inits/disconnects
+            if (event.type === "agent:init") {
+              knownAgents.set(event.agentId, event);
+            } else if (event.type === "agent:disconnect") {
+              knownAgents.delete(event.agentId);
+            }
+            broadcastToClients(event);
+            return;
+          }
+
+          // Client messages: commands
+          const cmd = msg as GolemCommand;
           if (cmd.type === "inject" && onInject) {
             onInject(cmd.text);
           }
@@ -180,6 +230,10 @@ export function createSideChannelServer(
         }
       },
       close(ws: ServerWebSocket<WSData>) {
+        if (ws.data.role === "peer") {
+          peers.delete(ws);
+          return;
+        }
         clients.delete(ws);
       },
     },
