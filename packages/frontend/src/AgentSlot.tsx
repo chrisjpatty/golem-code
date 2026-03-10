@@ -54,6 +54,11 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
             break;
           case "tool:end":
             decrementTools();
+            // Reset "oh" expression from permission:request now that the tool completed
+            faceRef.current?.setExpression("neutral");
+            if (activeToolCount.current > 0) {
+              faceRef.current?.startEyeGlow();
+            }
             break;
           case "subagent:start":
             incrementTools();
@@ -100,6 +105,7 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
             removing={subagents.removingSubagents.has(sub.toolUseId)}
             onRemoved={() => subagents.onSubagentRemoved(sub.toolUseId)}
             boundsWidth={boundsWidth}
+            faceScale={faceScale}
           />
         ))}
       </group>

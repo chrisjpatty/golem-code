@@ -36,6 +36,8 @@ type SubagentFaceProps = {
   onRemoved?: () => void;
   /** Override viewport width for wander bounds (used in multi-agent layout) */
   boundsWidth?: number;
+  /** Scale factor of the parent agent face (default 1.0) */
+  faceScale?: number;
 };
 
 const BASE_SCALE = 0.27;
@@ -44,7 +46,7 @@ const BASE_REPULSE_STRENGTH = 0.6;
 /** Fraction of viewport to use as padding on each edge */
 const PADDING = 0.08;
 
-export function SubagentFace({ subagent, panelOpen = false, positions, targetScale, removing, onRemoved, boundsWidth }: SubagentFaceProps) {
+export function SubagentFace({ subagent, panelOpen = false, positions, targetScale, removing, onRemoved, boundsWidth, faceScale = 1 }: SubagentFaceProps) {
   const groupRef = useRef<THREE.Group>(null);
   const faceRef = useRef<GolemFaceHandle>(null);
   const scaleRef = useRef(0);
@@ -84,7 +86,11 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
       glowStarted.current = true;
     }
 
-    // Pop-in / pop-out scale (targetScale adjusts for crowd density)
+    // Pop-in / pop-out scale (targetScale adjusts for crowd density, faceScale matches parent)
+    // Use a soft power curve so subagents don't become invisible at small faceScale values
+    // e.g. faceScale=0.18 → overlayFactor≈0.25 → subagent is ~25% of main face size
+    const overlayFactor = Math.pow(faceScale, 0.4) * 0.5;
+    const effectiveTargetScale = targetScale * overlayFactor;
     if (removing) {
       scaleRef.current = damp(scaleRef.current, 0, 6, d);
       if (scaleRef.current < 0.005) {
@@ -92,21 +98,27 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
         return;
       }
     } else {
-      scaleRef.current = damp(scaleRef.current, targetScale, 6, d);
+      scaleRef.current = damp(scaleRef.current, effectiveTargetScale, 6, d);
     }
 
     const s = scaleRef.current;
     groupRef.current.scale.set(s, s, s);
 
     // Compute and smoothly damp wander bounds based on viewport and panel state
-    const vw = boundsWidth ?? viewport.width;
-    const vh = viewport.height;
+    // When faceScale < 1 (overlay mode), constrain movement to a small radius
+    // around the parent agent instead of using viewport-sized bounds
+    const WANDER_RADIUS = 1.2; // scene units radius at full scale
+    const wanderRadius = WANDER_RADIUS * overlayFactor;
+    const isOverlay = faceScale < 1;
+    const vw = isOverlay ? wanderRadius * 2 : (boundsWidth ?? viewport.width);
+    const vh = isOverlay ? wanderRadius * 2 : viewport.height;
     const padX = vw * PADDING;
     const padY = vh * PADDING;
     // Panel open: left half of screen. Panel closed: full screen.
-    const targetCenterX = panelOpen ? -vw / 4 : 0;
-    const targetHalfW = (panelOpen ? vw / 4 : vw / 2) - padX;
-    const targetHalfH = vh / 2 - padY;
+    // In overlay (faceScale < 1), always center on parent agent (0,0 in local group)
+    const targetCenterX = isOverlay ? 0 : (panelOpen ? -vw / 4 : 0);
+    const targetHalfW = isOverlay ? (wanderRadius - padX) : ((panelOpen ? vw / 4 : vw / 2) - padX);
+    const targetHalfH = isOverlay ? (wanderRadius - padY) : (vh / 2 - padY);
 
     const b = boundsRef.current;
     // On first frame, snap bounds so sub-agents launch from the correct
@@ -133,9 +145,10 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
 
     // Compute repulsion from nearby subagents
     // Scale repulsion distance and strength with current size so small faces don't fly apart
-    const scaleFactor = s / BASE_SCALE;
-    const repulseThreshold = BASE_REPULSE_THRESHOLD * scaleFactor;
-    const repulseStrength = BASE_REPULSE_STRENGTH * scaleFactor;
+    const effectiveBaseScale = BASE_SCALE * overlayFactor;
+    const scaleFactor = s / effectiveBaseScale;
+    const repulseThreshold = BASE_REPULSE_THRESHOLD * overlayFactor * scaleFactor;
+    const repulseStrength = BASE_REPULSE_STRENGTH * overlayFactor * scaleFactor;
     let pushX = 0;
     let pushY = 0;
     const map = positions.current;
@@ -159,8 +172,26 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
     r.x = damp(r.x, pushX, 3, d);
     r.y = damp(r.y, pushY, 3, d);
 
-    const finalX = desiredX + r.x;
-    const finalY = desiredY + r.y;
+    let finalX = desiredX + r.x;
+    let finalY = desiredY + r.y;
+
+    // In overlay mode, clamp to viewport bounds so subagents don't wander off screen.
+    // The parent group is offset by SceneAnchor to (vw/2 - padAnchorX, -vh/2 + padAnchorY).
+    // Subagent world pos = anchorOffset + localPos, must stay within [-vw/2, vw/2] x [-vh/2, vh/2].
+    if (isOverlay) {
+      const anchorPadX = 0.45;
+      const anchorPadY = 0.55;
+      const anchorX = viewport.width / 2 - anchorPadX;
+      const anchorY = -viewport.height / 2 + anchorPadY;
+      // Max local offset so world pos stays on screen (with small margin for face size)
+      const margin = s * 0.5;
+      const minX = -viewport.width / 2 - anchorX + margin;
+      const maxX = viewport.width / 2 - anchorX - margin;
+      const minY = -viewport.height / 2 - anchorY + margin;
+      const maxY = viewport.height / 2 - anchorY - margin;
+      finalX = Math.max(minX, Math.min(maxX, finalX));
+      finalY = Math.max(minY, Math.min(maxY, finalY));
+    }
 
     groupRef.current.position.set(finalX, finalY, 1.0);
 
