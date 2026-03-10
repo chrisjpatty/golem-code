@@ -212,6 +212,20 @@ export function createSideChannelServer(
             const event = msg as GolemEvent;
             // Track agent inits/disconnects
             if (event.type === "agent:init") {
+              // Reassign color if it's already in use by another agent
+              const usedColors = new Set(
+                [...knownAgents.values()].map((a) => a.color)
+              );
+              if (usedColors.has(event.color)) {
+                const FACE_COLORS = [
+                  "#cc1111", "#1155cc", "#11aa44", "#cc8811", "#8822cc", "#cc1177",
+                  "#11aaaa", "#cc5511", "#4466cc", "#44aa11", "#aa1166", "#888888",
+                ];
+                const available = FACE_COLORS.filter((c) => !usedColors.has(c));
+                if (available.length > 0) {
+                  event.color = available[Math.floor(Math.random() * available.length)];
+                }
+              }
               knownAgents.set(event.agentId, event);
             } else if (event.type === "agent:disconnect") {
               knownAgents.delete(event.agentId);

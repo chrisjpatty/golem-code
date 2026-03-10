@@ -37,7 +37,7 @@ function SceneAnchor({ mode, children }: { mode: SceneMode; children: ReactNode 
 }
 
 export function App() {
-  const { agents, addAgent, removeAgent } = useAgentManager();
+  const { agents, removingAgents, addAgent, markRemoving, onAgentRemoved } = useAgentManager();
 
   // Map of agentId → AgentSlotHandle ref for routing events
   const slotRefs = useRef(new Map<string, React.RefObject<AgentSlotHandle | null>>());
@@ -60,8 +60,7 @@ export function App() {
           break;
 
         case "agent:disconnect":
-          removeAgent(event.agentId);
-          slotRefs.current.delete(event.agentId);
+          markRemoving(event.agentId);
           break;
 
         default:
@@ -73,7 +72,7 @@ export function App() {
           break;
       }
     },
-    [addAgent, removeAgent],
+    [addAgent, markRemoving],
   );
 
   const { sendCommand, connectionState } = useGolemSocket({
@@ -87,41 +86,63 @@ export function App() {
     [sendCommand],
   );
 
-  // Compute X positions: right-aligned for overlay, centered for browser
-  const agentPositions = useMemo(() => {
-    const count = agents.length;
-    if (SCENE_MODE === "overlay") {
-      // Right-aligned: rightmost agent at x=0, others stack left
-      return agents.map((_, i) => -(count - 1 - i) * AGENT_SPACING);
-    }
-    const totalWidth = (count - 1) * AGENT_SPACING;
-    const startX = -totalWidth / 2;
-    return agents.map((_, i) => startX + i * AGENT_SPACING);
-  }, [agents.length]);
-
-  // When multiple agents, constrain each subagent's wander bounds to its slot
-  const boundsWidth = agents.length <= 1 ? undefined : AGENT_SPACING;
-
   // Scale face down in overlay mode so it fits the small viewport height
   const faceScale = SCENE_MODE === "overlay" ? 0.18 : 1;
 
+  // Compute X positions for non-removing agents only, so removing agents
+  // don't affect the layout and remaining agents slide into place.
+  const activeAgents = agents.filter((a) => !removingAgents.has(a.agentId));
+  const agentPositions = useMemo(() => {
+    const effectiveSpacing = Math.pow(faceScale, 0.7) * AGENT_SPACING;
+    const count = activeAgents.length;
+    if (SCENE_MODE === "overlay") {
+      return activeAgents.map((_, i) => -i * effectiveSpacing);
+    }
+    const totalWidth = (count - 1) * effectiveSpacing;
+    const startX = -totalWidth / 2;
+    return activeAgents.map((_, i) => startX + i * effectiveSpacing);
+  }, [activeAgents.length, faceScale]);
+
+  // Build a position map for all agents (active get layout positions, removing get their last position)
+  const positionMap = useMemo(() => {
+    const map = new Map<string, number>();
+    activeAgents.forEach((a, i) => map.set(a.agentId, agentPositions[i]));
+    // Removing agents keep their current position (they'll scale to 0 in place)
+    for (const a of agents) {
+      if (!map.has(a.agentId)) {
+        map.set(a.agentId, 0); // will be off-screen as they scale out
+      }
+    }
+    return map;
+  }, [agents, activeAgents, agentPositions]);
+
+  // When multiple agents, constrain each subagent's wander bounds to its slot
+  const boundsWidth = activeAgents.length <= 1 ? undefined : AGENT_SPACING;
+
   // For DevPanel compatibility, expose the first agent's face ref
   const firstAgentRef = agents.length > 0 ? getSlotRef(agents[0].agentId) : null;
+
+  const handleAgentRemoved = useCallback((agentId: string) => {
+    onAgentRemoved(agentId);
+    slotRefs.current.delete(agentId);
+  }, [onAgentRemoved]);
 
   return (
     <>
       <GolemScene mode={SCENE_MODE}>
         <SceneAnchor mode={SCENE_MODE}>
-          {agents.map((agent, i) => (
+          {agents.map((agent) => (
             <AgentSlot
               key={agent.agentId}
               ref={getSlotRef(agent.agentId)}
               agentId={agent.agentId}
               seed={agent.seed}
               color={agent.color}
-              positionX={agentPositions[i]}
+              positionX={positionMap.get(agent.agentId) ?? 0}
               boundsWidth={boundsWidth}
               faceScale={faceScale}
+              removing={removingAgents.has(agent.agentId)}
+              onRemoved={() => handleAgentRemoved(agent.agentId)}
             />
           ))}
         </SceneAnchor>
