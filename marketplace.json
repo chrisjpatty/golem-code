@@ -1,0 +1,10 @@
+{
+  "name": "golem-code",
+  "description": "Plugins for the Golem Code companion",
+  "plugins": [
+    {
+      "name": "golem-code",
+      "path": "./packages/plugin"
+    }
+  ]
+}

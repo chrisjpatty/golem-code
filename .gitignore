@@ -4,3 +4,6 @@ target
 .env
 *.tsbuildinfo
 models/
+
+# Auto-generated embedded assets
+*.generated.ts

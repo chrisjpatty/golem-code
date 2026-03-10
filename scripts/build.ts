@@ -3,13 +3,9 @@
 /**
  * Unified build script for golem-code.
  *
- * Builds all packages and produces a distributable directory at dist/
- * containing:
- *   - summon          (CLI binary, with embedded frontend assets)
- *   - golem-overlay   (Tauri overlay binary)
- *
- * The CLI resolves golem-overlay as a sibling binary, so both must
- * live in the same directory.
+ * Builds all packages and produces a single distributable binary at dist/summon.
+ * The overlay binary is embedded inside the CLI and extracted to ~/.golem/bin/
+ * on first run (or version change).
  *
  * Usage:
  *   bun run scripts/build.ts              # build everything
@@ -17,7 +13,7 @@
  */
 
 import { resolve, join } from "path";
-import { existsSync, mkdirSync, copyFileSync, chmodSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
@@ -39,23 +35,8 @@ function run(cmd: string[], cwd: string, label: string): void {
 // ── 1. Frontend ──────────────────────────────────────────────────
 run(["bun", "run", "build"], FRONTEND_DIR, "Building frontend (Vite)");
 
-// ── 2. Embed frontend assets into CLI ────────────────────────────
-run(
-  ["bun", "run", join(CLI_DIR, "src/embedAssets.ts")],
-  ROOT,
-  "Embedding frontend assets into CLI",
-);
-
-// ── 3. Compile CLI binary ────────────────────────────────────────
-mkdirSync(DIST, { recursive: true });
-const summonOut = join(DIST, "summon");
-run(
-  ["bun", "build", join(CLI_DIR, "src/index.ts"), "--compile", "--outfile", summonOut],
-  ROOT,
-  "Compiling CLI binary",
-);
-
-// ── 4. Overlay (Tauri/Rust) ──────────────────────────────────────
+// ── 2. Overlay (Tauri/Rust) ──────────────────────────────────────
+// Built before the CLI so we can embed the binary into it.
 if (!skipOverlay) {
   run(["cargo", "build", "--release"], OVERLAY_DIR, "Building overlay (Tauri)");
 
@@ -64,18 +45,34 @@ if (!skipOverlay) {
     console.error(`[build] FAILED: overlay binary not found at ${overlayBin}`);
     process.exit(1);
   }
-
-  const overlayDest = join(DIST, "golem-overlay");
-  copyFileSync(overlayBin, overlayDest);
-  chmodSync(overlayDest, 0o755);
-  console.log(`[build] Copied golem-overlay to dist/`);
 } else {
   console.log("\n[build] Skipping overlay build (--skip-overlay)");
 }
 
-// ── Done ─────────────────────────────────────────────────────────
-console.log(`\n[build] Done! Distributable binaries in: ${DIST}/`);
-console.log(`  - ${join(DIST, "summon")}`);
+// ── 3. Embed frontend assets into CLI ────────────────────────────
+run(
+  ["bun", "run", join(CLI_DIR, "src/embedAssets.ts")],
+  ROOT,
+  "Embedding frontend assets into CLI",
+);
+
+// ── 4. Embed overlay binary into CLI ─────────────────────────────
 if (!skipOverlay) {
-  console.log(`  - ${join(DIST, "golem-overlay")}`);
+  run(
+    ["bun", "run", join(CLI_DIR, "src/embedOverlay.ts")],
+    ROOT,
+    "Embedding overlay binary into CLI",
+  );
 }
+
+// ── 5. Compile CLI binary ────────────────────────────────────────
+mkdirSync(DIST, { recursive: true });
+const summonOut = join(DIST, "summon");
+run(
+  ["bun", "build", join(CLI_DIR, "src/index.ts"), "--compile", "--outfile", summonOut],
+  ROOT,
+  "Compiling CLI binary",
+);
+
+// ── Done ─────────────────────────────────────────────────────────
+console.log(`\n[build] Done! Distributable binary: ${summonOut}`);

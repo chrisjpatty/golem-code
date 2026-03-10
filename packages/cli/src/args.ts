@@ -10,6 +10,7 @@ export type ParsedArgs = {
   golemDebug?: boolean;
   version?: boolean;
   help?: boolean;
+  update?: boolean;
   /** Everything after -- is forwarded to Claude as-is */
   passthroughArgs?: string[];
 };
@@ -97,6 +98,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
       case "--golem-debug":
         result.golemDebug = true;
+        break;
+
+      case "update":
+      case "--update":
+        result.update = true;
         break;
 
       default:

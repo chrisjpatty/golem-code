@@ -9,6 +9,8 @@ import { createHookTransform } from "./hookTransform";
 import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary } from "./instanceRegistry";
 import { FACE_COLORS, type GolemAgentInit, type GolemEvent } from "@golem-code/types";
 import { focusMyTerminal } from "./terminalFocus";
+import { ensureOverlay } from "./overlayManager";
+import { selfUpdate } from "./selfUpdate";
 
 
 // When running from source, resolve the frontend dist from the repo structure.
@@ -48,19 +50,7 @@ async function buildFrontend(): Promise<void> {
   console.log("[summon] Frontend built successfully.");
 }
 
-function launchOverlay(url: string, debug?: boolean): import("bun").Subprocess | null {
-  // In compiled mode, resolve as sibling of the real executable on disk.
-  // import.meta.dirname points to /$bunfs/root/ in compiled binaries, so use process.execPath.
-  const overlayBin = IS_COMPILED
-    ? resolve(dirname(process.execPath), "golem-overlay")
-    : resolve(import.meta.dirname, "../../overlay/target/release/golem-overlay");
-
-  if (!IS_COMPILED && !existsSync(overlayBin)) {
-    console.error(`[summon] Overlay binary not found at ${overlayBin}`);
-    console.error("[summon] Build it with: cd packages/overlay && cargo build --release");
-    process.exit(1);
-  }
-
+function launchOverlay(overlayBin: string, url: string, debug?: boolean): import("bun").Subprocess | null {
   try {
     const qs = debug ? "?mode=overlay&golem-debug=1" : "?mode=overlay";
     const proc = Bun.spawn([overlayBin, `${url}${qs}`], {
@@ -185,6 +175,12 @@ async function main() {
   if (args.version) {
     const pkg = await import("../package.json");
     console.log(`summon (golem-code) ${pkg.version}`);
+    process.exit(0);
+  }
+
+  if (args.update) {
+    const pkg = await import("../package.json");
+    await selfUpdate(pkg.version);
     process.exit(0);
   }
 
@@ -357,7 +353,20 @@ async function runAsPrimary(
       openBrowser(url);
     }
   } else {
-    overlayProc = launchOverlay(url, args.golemDebug);
+    // Resolve the overlay binary
+    let overlayBin: string;
+    if (IS_COMPILED) {
+      const pkg = await import("../package.json");
+      overlayBin = await ensureOverlay(pkg.version);
+    } else {
+      overlayBin = resolve(import.meta.dirname, "../../overlay/target/release/golem-overlay");
+      if (!existsSync(overlayBin)) {
+        console.error(`[summon] Overlay binary not found at ${overlayBin}`);
+        console.error("[summon] Build it with: cd packages/overlay && cargo build --release");
+        process.exit(1);
+      }
+    }
+    overlayProc = launchOverlay(overlayBin, url, args.golemDebug);
   }
 
   function cleanup(code: number) {
@@ -399,6 +408,9 @@ Options:
   --dev                         Dev mode: skip frontend build and static serving
   -v, --version                 Show version
   -h, --help                    Show this help
+
+Commands:
+  update                        Update summon to the latest version
 
   --                            Pass remaining args directly to Claude Code
 
