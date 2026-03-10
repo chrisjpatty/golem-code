@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="golem-logo.png" alt="Summon" width="120" />
+  <img src="golem-logo.png" alt="Summon" width="156" />
 </p>
 
 # golem-code
