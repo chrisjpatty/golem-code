@@ -380,9 +380,9 @@ export function createUpperFaceGeometry(p: FaceParams): FaceGeometryData {
 export function createJawGeometry(p: FaceParams): FaceGeometryData {
   const verts: [number, number, number][] = [
     // 0: left hinge
-    [-p.jawWidth, 0, -0.25],
+    [-p.jawWidth, -0.08, -0.25],
     // 1: right hinge
-    [p.jawWidth, 0, -0.25],
+    [p.jawWidth, -0.08, -0.25],
     // 2: left mouth corner
     [-p.mouthWidth, 0, 0.3],
     // 3: right mouth corner
