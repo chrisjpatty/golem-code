@@ -101,6 +101,12 @@ export function createHookTransform(options: HookTransformOptions) {
         break;
       }
 
+      case "PermissionRequest": {
+        const toolName = (data.tool_name as string) ?? "";
+        onEvent({ type: "permission:request", agentId, toolName });
+        break;
+      }
+
       case "Stop": {
         onEvent({ type: "turn:end", agentId });
         onEvent({ type: "activity", agentId, state: "idle" });

@@ -38,6 +38,12 @@ export type GolemActivity = {
   state: "active" | "idle";
 };
 
+export type GolemPermissionRequest = {
+  type: "permission:request";
+  agentId: string;
+  toolName: string;
+};
+
 export type GolemTurnEnd = {
   type: "turn:end";
   agentId: string;
@@ -61,6 +67,7 @@ export type GolemEvent =
   | GolemSubagentStart
   | GolemSubagentEnd
   | GolemActivity
+  | GolemPermissionRequest
   | GolemTurnEnd
   | GolemAgentInit
   | GolemAgentDisconnect;

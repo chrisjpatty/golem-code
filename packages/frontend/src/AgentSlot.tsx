@@ -49,6 +49,7 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
 
         switch (event.type) {
           case "tool:start":
+            faceRef.current?.setExpression("neutral");
             incrementTools();
             break;
           case "tool:end":
@@ -62,6 +63,11 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
             decrementTools();
             subagents.markRemoving(event.toolUseId);
             break;
+          case "permission:request":
+            // Waiting for user approval — show alert expression
+            faceRef.current?.setExpression("oh");
+            faceRef.current?.stopEyeGlow();
+            break;
           case "activity":
             if (event.state === "idle") {
               faceRef.current?.stopEyeGlow();
@@ -70,6 +76,7 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
           case "turn:end":
             activeToolCount.current = 0;
             faceRef.current?.stopEyeGlow();
+            faceRef.current?.setExpression("neutral");
             subagents.markAllRemoving();
             break;
         }

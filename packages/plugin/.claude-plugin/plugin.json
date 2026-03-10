@@ -1,9 +1,8 @@
 {
   "name": "golem-code",
-  "version": "0.1.0",
-  "description": "Ambient 3D companion for Claude Code — routes events to the Golem visualization server",
+  "description": "Hooks for the Golem ambient companion — forwards Claude Code events to summon's local server",
+  "version": "0.0.1",
   "author": {
-    "name": "golem-code"
-  },
-  "hooks": "./hooks/hooks.json"
+    "name": "Chris Patty"
+  }
 }

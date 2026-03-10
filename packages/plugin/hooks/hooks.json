@@ -5,8 +5,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/forward-hook.sh"
+            "type": "http",
+            "url": "http://localhost:6661/hook"
           }
         ]
       }
@@ -16,30 +16,19 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/forward-hook.sh"
+            "type": "http",
+            "url": "http://localhost:6661/hook"
           }
         ]
       }
     ],
-    "SubagentStart": [
+    "PermissionRequest": [
       {
         "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/forward-hook.sh"
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/forward-hook.sh"
+            "type": "http",
+            "url": "http://localhost:6661/hook"
           }
         ]
       }
@@ -49,8 +38,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/forward-hook.sh"
+            "type": "http",
+            "url": "http://localhost:6661/hook"
           }
         ]
       }
