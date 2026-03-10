@@ -75,4 +75,5 @@ export type GolemEvent =
 // -- Client → Server commands --
 
 export type GolemCommand =
-  | { type: "inject"; text: string };
+  | { type: "inject"; text: string }
+  | { type: "focus:agent"; agentId: string };

@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useMemo, type ReactNode } from "react";
-import { useThree } from "@react-three/fiber";
+import { useThree, useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 import { AgentSlot, type AgentSlotHandle } from "./AgentSlot";
 import { GolemScene, type SceneMode } from "./GolemScene";
 import { DevPanel } from "./DevPanel";
@@ -7,13 +8,14 @@ import { getRandomUnusedColor } from "./faceGen";
 import { VoiceButton } from "./VoiceButton";
 import { useGolemSocket } from "./useGolemSocket";
 import { useAgentManager, type AgentInfo } from "./hooks/useAgentManager";
-import type { GolemEvent } from "@golem-code/types";
+import { useFaceClickthrough } from "./hooks/useFaceClickthrough";
+import type { GolemEvent, GolemCommand } from "@golem-code/types";
 import type { GolemFaceHandle } from "./GolemFace";
 
+const URL_PARAMS = new URLSearchParams(window.location.search);
 const SCENE_MODE: SceneMode =
-  new URLSearchParams(window.location.search).get("mode") === "overlay"
-    ? "overlay"
-    : "browser";
+  URL_PARAMS.get("mode") === "overlay" ? "overlay" : "browser";
+const GOLEM_DEBUG = URL_PARAMS.get("golem-debug") === "1";
 
 /** Spacing between agent faces in scene units */
 const AGENT_SPACING = 2.5;
@@ -33,6 +35,92 @@ function SceneAnchor({ mode, children }: { mode: SceneMode; children: ReactNode 
     <group position={[viewport.width / 2 - padX, -viewport.height / 2 + padY, 0]}>
       {children}
     </group>
+  );
+}
+
+/** Hit radius in CSS pixels — must match HIT_RADIUS in overlay main.rs */
+const DEBUG_HIT_RADIUS_PX = 60;
+
+/**
+ * Tracks face world positions, handles click-through interaction,
+ * and renders debug circles showing the Rust overlay's hit regions.
+ */
+function FaceClickLayer({
+  agents,
+  positionMap,
+  faceScale,
+  sendCommand,
+}: {
+  agents: AgentInfo[];
+  positionMap: Map<string, number>;
+  faceScale: number;
+  sendCommand: (cmd: GolemCommand) => void;
+}) {
+  const { viewport, size } = useThree();
+
+  const handleFaceClick = useCallback(
+    (agentId: string) => {
+      sendCommand({ type: "focus:agent", agentId });
+    },
+    [sendCommand],
+  );
+
+  const { updateFaceTargets } = useFaceClickthrough(handleFaceClick);
+
+  // Each frame, compute face world positions and update the hit targets
+  useFrame(() => {
+    const anchorX = viewport.width / 2 - 0.45;
+    const anchorY = -viewport.height / 2 + 0.55;
+
+    const targets = agents.map((agent) => {
+      const agentX = positionMap.get(agent.agentId) ?? 0;
+      return {
+        agentId: agent.agentId,
+        worldPos: new THREE.Vector3(anchorX + agentX, anchorY, 0),
+      };
+    });
+
+    updateFaceTargets(targets);
+  });
+
+  // Convert the hit radius from CSS pixels to scene units
+  // viewport.width (scene units) maps to size.width (CSS pixels)
+  const pxToScene = viewport.width / size.width;
+  const hitRadiusScene = DEBUG_HIT_RADIUS_PX * pxToScene;
+  const verticalStretch = 1.25; // oval: 25% taller than wide
+  const yOffsetPx = -4; // shift up by 4 CSS pixels
+  const yOffsetScene = yOffsetPx * pxToScene;
+
+  // Compute the same positions used for hit testing
+  const anchorX = viewport.width / 2 - 0.45;
+  const anchorY = -viewport.height / 2 + 0.55;
+
+  if (!GOLEM_DEBUG) return null;
+
+  return (
+    <>
+      {agents.map((agent) => {
+        const agentX = positionMap.get(agent.agentId) ?? 0;
+        return (
+          <mesh
+            key={agent.agentId}
+            position={[anchorX + agentX, anchorY - yOffsetScene, 2]}
+            scale={[1, verticalStretch, 1]}
+            renderOrder={999}
+          >
+            <ringGeometry args={[hitRadiusScene * 0.95, hitRadiusScene, 48]} />
+            <meshBasicMaterial
+              color="#ff0000"
+              transparent
+              opacity={0.4}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+        );
+      })}
+    </>
   );
 }
 
@@ -146,6 +234,14 @@ export function App() {
             />
           ))}
         </SceneAnchor>
+        {SCENE_MODE === "overlay" && (
+          <FaceClickLayer
+            agents={activeAgents}
+            positionMap={positionMap}
+            faceScale={faceScale}
+            sendCommand={sendCommand}
+          />
+        )}
       </GolemScene>
       {SCENE_MODE === "browser" && (
         <>

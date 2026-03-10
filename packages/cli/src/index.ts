@@ -8,6 +8,7 @@ import { spawnClaude, injectText, restoreTerminal, type PtyCleanup } from "./pty
 import { createHookTransform } from "./hookTransform";
 import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary } from "./instanceRegistry";
 import type { GolemAgentInit, GolemEvent } from "@golem-code/types";
+import { focusMyTerminal } from "./terminalFocus";
 
 // Face colors for agent identity (must match frontend/src/faceGen.ts FACE_COLORS)
 const FACE_COLORS = [
@@ -52,7 +53,7 @@ async function buildFrontend(): Promise<void> {
   console.log("[summon] Frontend built successfully.");
 }
 
-function launchOverlay(url: string): import("bun").Subprocess | null {
+function launchOverlay(url: string, debug?: boolean): import("bun").Subprocess | null {
   // In compiled mode, resolve as sibling of the real executable on disk.
   // import.meta.dirname points to /$bunfs/root/ in compiled binaries, so use process.execPath.
   const overlayBin = IS_COMPILED
@@ -66,7 +67,8 @@ function launchOverlay(url: string): import("bun").Subprocess | null {
   }
 
   try {
-    const proc = Bun.spawn([overlayBin, `${url}?mode=overlay`], {
+    const qs = debug ? "?mode=overlay&golem-debug=1" : "?mode=overlay";
+    const proc = Bun.spawn([overlayBin, `${url}${qs}`], {
       stdout: "ignore",
       stderr: "ignore",
     });
@@ -129,6 +131,18 @@ function connectAsPeer(
         ws!.send(msg);
       }
       queue = [];
+    };
+
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") return;
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "focus:request") {
+          focusMyTerminal();
+        }
+      } catch {
+        // Ignore invalid JSON
+      }
     };
 
     ws.onclose = () => {
@@ -324,6 +338,9 @@ async function runAsPrimary(
         injectText(pty.proc, text);
       }
     },
+    onFocusAgent: (_agentId) => {
+      focusMyTerminal();
+    },
     onHookEvent: (data) => hookTransform.handleHookEvent(data),
   });
 
@@ -345,7 +362,7 @@ async function runAsPrimary(
       openBrowser(url);
     }
   } else {
-    overlayProc = launchOverlay(url);
+    overlayProc = launchOverlay(url, args.golemDebug);
   }
 
   function cleanup(code: number) {

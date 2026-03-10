@@ -23,6 +23,8 @@ export type SideChannelServerOptions = {
   embeddedAssets?: Record<string, EmbeddedAsset>;
   /** Called when a client sends an inject command */
   onInject?: (text: string) => void;
+  /** Called when a client requests to focus an agent's terminal */
+  onFocusAgent?: (agentId: string) => void;
   /** Agent identity for this CLI instance */
   agentInit?: GolemAgentInit;
   /** Called when a hook event is received via POST /hook */
@@ -64,6 +66,7 @@ export function createSideChannelServer(
   const staticDir = options.staticDir ?? null;
   const embeddedAssets = options.embeddedAssets ?? null;
   const onInject = options.onInject;
+  const onFocusAgent = options.onFocusAgent;
   const onHookEvent = options.onHookEvent;
   const agentInit = options.agentInit ?? null;
 
@@ -72,6 +75,9 @@ export function createSideChannelServer(
 
   // Track all known agent inits so new frontend clients get the full state
   const knownAgents = new Map<string, GolemAgentInit>();
+
+  // Map agentId → peer WebSocket for sending focus requests to peers
+  const peerByAgent = new Map<string, ServerWebSocket<WSData>>();
   if (agentInit) {
     knownAgents.set(agentInit.agentId, agentInit);
   }
@@ -227,8 +233,10 @@ export function createSideChannelServer(
                 }
               }
               knownAgents.set(event.agentId, event);
+              peerByAgent.set(event.agentId, ws);
             } else if (event.type === "agent:disconnect") {
               knownAgents.delete(event.agentId);
+              peerByAgent.delete(event.agentId);
             }
             broadcastToClients(event);
             return;
@@ -238,6 +246,16 @@ export function createSideChannelServer(
           const cmd = msg as GolemCommand;
           if (cmd.type === "inject" && onInject) {
             onInject(cmd.text);
+          } else if (cmd.type === "focus:agent") {
+            // Check if this is for a peer agent
+            const peerWs = peerByAgent.get(cmd.agentId);
+            if (peerWs) {
+              // Forward focus request to the peer
+              peerWs.send(JSON.stringify({ type: "focus:request" }));
+            } else if (onFocusAgent) {
+              // It's for the primary agent
+              onFocusAgent(cmd.agentId);
+            }
           }
         } catch {
           // Invalid JSON — ignore
@@ -246,6 +264,13 @@ export function createSideChannelServer(
       close(ws: ServerWebSocket<WSData>) {
         if (ws.data.role === "peer") {
           peers.delete(ws);
+          // Clean up agentId → peer mapping
+          for (const [agentId, peerWs] of peerByAgent) {
+            if (peerWs === ws) {
+              peerByAgent.delete(agentId);
+              break;
+            }
+          }
           return;
         }
         clients.delete(ws);

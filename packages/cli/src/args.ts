@@ -7,6 +7,7 @@ export type ParsedArgs = {
   noOpen?: boolean;
   dev?: boolean;
   browser?: boolean;
+  golemDebug?: boolean;
   version?: boolean;
   help?: boolean;
   /** Everything after -- is forwarded to Claude as-is */
@@ -92,6 +93,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
       case "--browser":
         result.browser = true;
+        break;
+
+      case "--golem-debug":
+        result.golemDebug = true;
         break;
 
       default:
