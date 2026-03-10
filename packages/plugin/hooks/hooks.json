@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:6661/hook"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "",

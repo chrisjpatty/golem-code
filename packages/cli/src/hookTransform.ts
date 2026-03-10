@@ -2,11 +2,12 @@
  * Transforms Claude Code hook event payloads into GolemEvents.
  *
  * Hook events arrive as POST bodies from the Claude Code plugin:
- *   - PreToolUse:    { hook_event_name, tool_name, tool_input }
- *   - PostToolUse:   { hook_event_name, tool_name, tool_input, tool_output }
- *   - SubagentStart: { hook_event_name, agent_id, agent_type }
- *   - SubagentStop:  { hook_event_name, agent_id, agent_type }
- *   - Stop:          { hook_event_name }
+ *   - UserPromptSubmit: { hook_event_name }
+ *   - PreToolUse:       { hook_event_name, tool_name, tool_input }
+ *   - PostToolUse:      { hook_event_name, tool_name, tool_input, tool_output }
+ *   - SubagentStart:    { hook_event_name, agent_id, agent_type }
+ *   - SubagentStop:     { hook_event_name, agent_id, agent_type }
+ *   - Stop:             { hook_event_name }
  */
 
 import type { GolemEvent } from "@golem-code/types";
@@ -30,6 +31,11 @@ export function createHookTransform(options: HookTransformOptions) {
     const eventName = data.hook_event_name as string;
 
     switch (eventName) {
+      case "UserPromptSubmit": {
+        onEvent({ type: "activity", agentId, state: "active" });
+        break;
+      }
+
       case "PreToolUse": {
         const toolName = data.tool_name as string;
         const toolUseId = crypto.randomUUID();

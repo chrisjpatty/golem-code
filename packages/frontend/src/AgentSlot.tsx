@@ -32,14 +32,10 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
 
     function incrementTools() {
       activeToolCount.current++;
-      faceRef.current?.startEyeGlow();
     }
 
     function decrementTools() {
       activeToolCount.current = Math.max(0, activeToolCount.current - 1);
-      if (activeToolCount.current === 0) {
-        faceRef.current?.stopEyeGlow();
-      }
     }
 
     const handleEvent = useCallback(
@@ -49,16 +45,14 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
 
         switch (event.type) {
           case "tool:start":
-            faceRef.current?.setExpression("neutral");
+            faceRef.current?.setExpression("smile");
             incrementTools();
             break;
           case "tool:end":
             decrementTools();
-            // Reset permission-waiting state now that the tool completed
-            faceRef.current?.setExpression("neutral");
             faceRef.current?.stopEnvSpin();
-            if (activeToolCount.current > 0) {
-              faceRef.current?.startEyeGlow();
+            if (activeToolCount.current === 0) {
+              faceRef.current?.setExpression("neutral");
             }
             break;
           case "subagent:start":
@@ -68,15 +62,19 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
           case "subagent:end":
             decrementTools();
             subagents.markRemoving(event.toolUseId);
+            if (activeToolCount.current === 0) {
+              faceRef.current?.setExpression("neutral");
+            }
             break;
           case "permission:request":
             // Waiting for user approval — show alert expression + spin env map
             faceRef.current?.setExpression("oh");
-            faceRef.current?.stopEyeGlow();
             faceRef.current?.startEnvSpin();
             break;
           case "activity":
-            if (event.state === "idle") {
+            if (event.state === "active") {
+              faceRef.current?.startEyeGlow();
+            } else if (event.state === "idle") {
               faceRef.current?.stopEyeGlow();
             }
             break;
