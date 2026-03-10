@@ -3,10 +3,14 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release (e.g. 0.1.0) — a v-prefixed tag will be created"
+      bump:
+        description: "Release type"
         required: true
-        type: string
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -14,27 +18,39 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate version format
+      - name: Fetch all tags
+        run: git fetch --tags
+
+      - name: Compute next version
+        id: version
         run: |
-          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
-            echo "::error::Invalid version format '${{ inputs.version }}'. Use semver (e.g. 0.1.0 or 1.0.0-beta.1)"
-            exit 1
+          # Find the latest vX.Y.Z tag, default to 0.0.0 if none exist
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1 | sed 's/^v//')
+          if [ -z "$LATEST" ]; then
+            LATEST="0.0.0"
           fi
 
-      - name: Check tag does not already exist
-        run: |
-          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "::error::Tag v${{ inputs.version }} already exists"
-            exit 1
-          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Bumping $LATEST → $VERSION (${{ inputs.bump }})"
 
       - name: Create and push tag
         run: |
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
 
   build:
     needs: tag
@@ -45,7 +61,7 @@ jobs:
             os: macos-latest
             asset_name: summon-darwin-arm64
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             asset_name: summon-darwin-x64
 
     runs-on: ${{ matrix.os }}
@@ -53,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ inputs.version }}
+          ref: v${{ needs.tag.outputs.version }}
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -69,7 +85,7 @@ jobs:
         run: bun install
 
       - name: Build
-        run: bun run build
+        run: bun run build --target=${{ matrix.target }}
 
       - name: Rename binary
         run: mv dist/summon dist/${{ matrix.asset_name }}
@@ -81,13 +97,13 @@ jobs:
           path: dist/${{ matrix.asset_name }}
 
   release:
-    needs: build
+    needs: [tag, build]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ inputs.version }}
+          ref: v${{ needs.tag.outputs.version }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -97,7 +113,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
+          tag_name: v${{ needs.tag.outputs.version }}
+          name: v${{ needs.tag.outputs.version }}
           generate_release_notes: true
           files: artifacts/**/*

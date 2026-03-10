@@ -13,7 +13,7 @@
  */
 
 import { resolve, join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync } from "fs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
@@ -22,6 +22,8 @@ const CLI_DIR = join(ROOT, "packages/cli");
 const OVERLAY_DIR = join(ROOT, "packages/overlay");
 
 const skipOverlay = process.argv.includes("--skip-overlay");
+const targetFlag = process.argv.find((a) => a.startsWith("--target="));
+const target = targetFlag ? targetFlag.split("=")[1] : null;
 
 function run(cmd: string[], cwd: string, label: string): void {
   console.log(`\n[build] ${label}...`);
@@ -47,7 +49,9 @@ const frontendBuild = runAsync(["bun", "run", "build"], FRONTEND_DIR, "Building 
 
 let overlayBuild: Promise<void> | null = null;
 if (!skipOverlay) {
-  overlayBuild = runAsync(["cargo", "build", "--release"], OVERLAY_DIR, "Building overlay (Tauri)");
+  const cargoArgs = ["cargo", "build", "--release"];
+  if (target) cargoArgs.push("--target", target);
+  overlayBuild = runAsync(cargoArgs, OVERLAY_DIR, "Building overlay (Tauri)");
 } else {
   console.log("\n[build] Skipping overlay build (--skip-overlay)");
 }
@@ -56,10 +60,19 @@ await frontendBuild;
 if (overlayBuild) {
   await overlayBuild;
 
-  const overlayBin = join(OVERLAY_DIR, "target/release/golem-overlay");
+  const overlayBin = target
+    ? join(OVERLAY_DIR, `target/${target}/release/golem-overlay`)
+    : join(OVERLAY_DIR, "target/release/golem-overlay");
   if (!existsSync(overlayBin)) {
     console.error(`[build] FAILED: overlay binary not found at ${overlayBin}`);
     process.exit(1);
+  }
+
+  // When cross-compiling, copy to the default path so embedOverlay.ts finds it
+  if (target) {
+    const defaultBin = join(OVERLAY_DIR, "target/release/golem-overlay");
+    mkdirSync(join(OVERLAY_DIR, "target/release"), { recursive: true });
+    copyFileSync(overlayBin, defaultBin);
   }
 }
 
@@ -82,11 +95,14 @@ if (!skipOverlay) {
 // ── 4. Compile CLI binary ────────────────────────────────────────
 mkdirSync(DIST, { recursive: true });
 const summonOut = join(DIST, "summon");
-run(
-  ["bun", "build", join(CLI_DIR, "src/index.ts"), "--compile", "--outfile", summonOut],
-  ROOT,
-  "Compiling CLI binary",
-);
+const bunCompileArgs = ["bun", "build", join(CLI_DIR, "src/index.ts"), "--compile", "--outfile", summonOut];
+if (target) {
+  const bunTarget = target === "x86_64-apple-darwin" ? "bun-darwin-x64"
+    : target === "aarch64-apple-darwin" ? "bun-darwin-arm64"
+    : null;
+  if (bunTarget) bunCompileArgs.push(`--target=${bunTarget}`);
+}
+run(bunCompileArgs, ROOT, "Compiling CLI binary");
 
 // ── Done ─────────────────────────────────────────────────────────
 console.log(`\n[build] Done! Distributable binary: ${summonOut}`);
