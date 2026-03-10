@@ -12,6 +12,7 @@ import { focusMyTerminal } from "./terminalFocus";
 import { ensureOverlay } from "./overlayManager";
 import { selfUpdate } from "./selfUpdate";
 
+const DEFAULT_PORT = 6661;
 
 // When running from source, resolve the frontend dist from the repo structure.
 // When compiled, frontend assets are embedded via embeddedAssets.generated.ts.
@@ -245,9 +246,8 @@ async function runAsPeer(
   });
 
   // We still need a minimal HTTP server for the plugin to POST hooks to
-  const { createSideChannelServer: createServer } = await import("./sideChannelServer");
-  const server = createServer({
-    port: args.port ?? 6661,
+  const server = createSideChannelServer({
+    port: args.port ?? DEFAULT_PORT,
     agentInit,
     onHookEvent: (data) => hookTransform.handleHookEvent(data),
   });
@@ -317,7 +317,7 @@ async function runAsPrimary(
 
   // Start side-channel server
   const server = createSideChannelServer({
-    port: args.port ?? 6661,
+    port: args.port ?? DEFAULT_PORT,
     agentInit,
     ...(embeddedAssets
       ? { embeddedAssets }
@@ -406,11 +406,9 @@ Options:
   --browser                     Open in browser instead of desktop overlay
   --no-open                     Don't auto-open the browser (with --browser)
   --dev                         Dev mode: skip frontend build and static serving
+  --update                      Update summon to the latest version
   -v, --version                 Show version
   -h, --help                    Show this help
-
-Commands:
-  update                        Update summon to the latest version
 
   --                            Pass remaining args directly to Claude Code
 

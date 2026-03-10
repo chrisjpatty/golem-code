@@ -32,31 +32,45 @@ function run(cmd: string[], cwd: string, label: string): void {
   }
 }
 
-// ── 1. Frontend ──────────────────────────────────────────────────
-run(["bun", "run", "build"], FRONTEND_DIR, "Building frontend (Vite)");
+async function runAsync(cmd: string[], cwd: string, label: string): Promise<void> {
+  console.log(`\n[build] ${label}...`);
+  const proc = Bun.spawn(cmd, { cwd, stdout: "inherit", stderr: "inherit" });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    console.error(`[build] FAILED: ${label} (exit code ${exitCode})`);
+    process.exit(1);
+  }
+}
 
-// ── 2. Overlay (Tauri/Rust) ──────────────────────────────────────
-// Built before the CLI so we can embed the binary into it.
+// ── 1. Frontend + Overlay (parallel) ────────────────────────────
+const frontendBuild = runAsync(["bun", "run", "build"], FRONTEND_DIR, "Building frontend (Vite)");
+
+let overlayBuild: Promise<void> | null = null;
 if (!skipOverlay) {
-  run(["cargo", "build", "--release"], OVERLAY_DIR, "Building overlay (Tauri)");
+  overlayBuild = runAsync(["cargo", "build", "--release"], OVERLAY_DIR, "Building overlay (Tauri)");
+} else {
+  console.log("\n[build] Skipping overlay build (--skip-overlay)");
+}
+
+await frontendBuild;
+if (overlayBuild) {
+  await overlayBuild;
 
   const overlayBin = join(OVERLAY_DIR, "target/release/golem-overlay");
   if (!existsSync(overlayBin)) {
     console.error(`[build] FAILED: overlay binary not found at ${overlayBin}`);
     process.exit(1);
   }
-} else {
-  console.log("\n[build] Skipping overlay build (--skip-overlay)");
 }
 
-// ── 3. Embed frontend assets into CLI ────────────────────────────
+// ── 2. Embed frontend assets into CLI ────────────────────────────
 run(
   ["bun", "run", join(CLI_DIR, "src/embedAssets.ts")],
   ROOT,
   "Embedding frontend assets into CLI",
 );
 
-// ── 4. Embed overlay binary into CLI ─────────────────────────────
+// ── 3. Embed overlay binary into CLI ─────────────────────────────
 if (!skipOverlay) {
   run(
     ["bun", "run", join(CLI_DIR, "src/embedOverlay.ts")],
@@ -65,7 +79,7 @@ if (!skipOverlay) {
   );
 }
 
-// ── 5. Compile CLI binary ────────────────────────────────────────
+// ── 4. Compile CLI binary ────────────────────────────────────────
 mkdirSync(DIST, { recursive: true });
 const summonOut = join(DIST, "summon");
 run(

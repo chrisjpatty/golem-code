@@ -4,6 +4,7 @@
  */
 
 import { existsSync, renameSync, unlinkSync, chmodSync } from "fs";
+import { join } from "path";
 
 const REPO = "chrisjpatty/golem-code";
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -19,6 +20,9 @@ type Release = {
 };
 
 function getAssetName(): string {
+  if (process.platform !== "darwin") {
+    throw new Error(`Unsupported platform: ${process.platform}. Summon currently only supports macOS.`);
+  }
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   return `summon-darwin-${arch}`;
 }
@@ -28,19 +32,13 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
   console.log("[summon] Checking for updates...");
 
   // Fetch latest release info
-  let release: Release;
-  try {
-    const res = await fetch(RELEASES_API, {
-      headers: { Accept: "application/vnd.github.v3+json" },
-    });
-    if (!res.ok) {
-      throw new Error(`GitHub API returned ${res.status}: ${await res.text()}`);
-    }
-    release = (await res.json()) as Release;
-  } catch (err) {
-    console.error("[summon] Failed to check for updates:", err);
-    process.exit(1);
+  const res = await fetch(RELEASES_API, {
+    headers: { Accept: "application/vnd.github.v3+json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to check for updates: GitHub API returned ${res.status}`);
   }
+  const release = (await res.json()) as Release;
 
   const latestVersion = release.tag_name.replace(/^v/, "");
   if (latestVersion === currentVersion) {
@@ -54,39 +52,31 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
   const assetName = getAssetName();
   const asset = release.assets.find((a) => a.name === assetName);
   if (!asset) {
-    console.error(`[summon] No release asset found for ${assetName}.`);
-    console.error(`[summon] Available assets: ${release.assets.map((a) => a.name).join(", ")}`);
-    process.exit(1);
+    throw new Error(
+      `No release asset found for ${assetName}.\n` +
+      `Available assets: ${release.assets.map((a) => a.name).join(", ")}`
+    );
   }
 
-  // Download the new binary
+  // Download the new binary — stream to a temp file to avoid buffering in memory
   console.log(`[summon] Downloading ${assetName}...`);
-  let data: ArrayBuffer;
-  try {
-    const res = await fetch(asset.browser_download_url);
-    if (!res.ok) {
-      throw new Error(`Download failed: ${res.status}`);
-    }
-    data = await res.arrayBuffer();
-  } catch (err) {
-    console.error("[summon] Download failed:", err);
-    process.exit(1);
+  const downloadRes = await fetch(asset.browser_download_url);
+  if (!downloadRes.ok) {
+    throw new Error(`Download failed: ${downloadRes.status}`);
   }
 
-  // Replace the current binary
   const execPath = process.execPath;
+  const tmpPath = `${execPath}.tmp`;
   const backupPath = `${execPath}.bak`;
 
+  await Bun.write(tmpPath, downloadRes);
+  chmodSync(tmpPath, 0o755);
+
+  // Swap binaries with backup for rollback safety
   try {
-    // Move current binary to backup
     if (existsSync(backupPath)) unlinkSync(backupPath);
     renameSync(execPath, backupPath);
-
-    // Write new binary
-    await Bun.write(execPath, data);
-    chmodSync(execPath, 0o755);
-
-    // Remove backup
+    renameSync(tmpPath, execPath);
     unlinkSync(backupPath);
   } catch (err) {
     // Try to restore from backup
@@ -97,11 +87,12 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
         // If restore fails, tell user where backup is
       }
     }
-    console.error("[summon] Failed to replace binary:", err);
-    if (existsSync(backupPath)) {
-      console.error(`[summon] Backup is at: ${backupPath}`);
+    // Clean up temp file
+    if (existsSync(tmpPath)) {
+      try { unlinkSync(tmpPath); } catch {}
     }
-    process.exit(1);
+    const detail = existsSync(backupPath) ? `\nBackup is at: ${backupPath}` : "";
+    throw new Error(`Failed to replace binary: ${err}${detail}`);
   }
 
   console.log(`[summon] Updated to ${latestVersion}. Restart summon to use the new version.`);

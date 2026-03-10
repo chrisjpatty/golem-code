@@ -37,21 +37,11 @@ ASSET_NAME="summon-${PLATFORM}-${ARCH_SUFFIX}"
 
 # ── Fetch latest release ─────────────────────────────────────────
 
-echo "Fetching latest release..."
+# Use GitHub's predictable redirect URL (no JSON parsing needed)
+DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${ASSET_NAME}"
 
-RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
-RELEASE_JSON="$(curl -fsSL "$RELEASE_URL")"
-
-# Extract download URL for our asset
-DOWNLOAD_URL="$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*${ASSET_NAME}\"" | head -1 | cut -d'"' -f4)"
-
-if [ -z "$DOWNLOAD_URL" ]; then
-  echo "Error: Could not find release asset '${ASSET_NAME}'."
-  echo "Check https://github.com/${REPO}/releases for available downloads."
-  exit 1
-fi
-
-VERSION="$(echo "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+# Get version from the redirect for display
+VERSION="$(curl -fsSIo /dev/null -w '%{redirect_url}' "https://github.com/${REPO}/releases/latest" | grep -o '[^/]*$')"
 echo "Installing summon ${VERSION} (${PLATFORM}/${ARCH_SUFFIX})..."
 
 # ── Download and install ─────────────────────────────────────────

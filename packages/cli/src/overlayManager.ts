@@ -7,8 +7,9 @@
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 
-const GOLEM_DIR = join(process.env.HOME ?? "~", ".golem");
+const GOLEM_DIR = join(homedir(), ".golem");
 const BIN_DIR = join(GOLEM_DIR, "bin");
 const OVERLAY_PATH = join(BIN_DIR, "golem-overlay");
 const VERSION_FILE = join(BIN_DIR, ".overlay-version");
@@ -26,11 +27,11 @@ export async function ensureOverlay(currentVersion: string): Promise<string> {
     }
   }
 
-  // Load embedded overlay
-  let overlayBase64: string;
+  // Load embedded overlay — uses Bun's file embedding (raw bytes, no base64)
+  let embeddedPath: string;
   try {
     const mod = await import("./embeddedOverlay.generated");
-    overlayBase64 = mod.EMBEDDED_OVERLAY_BASE64;
+    embeddedPath = mod.EMBEDDED_OVERLAY_PATH;
   } catch {
     throw new Error(
       "Embedded overlay binary not found. The build may be incomplete.\n" +
@@ -40,11 +41,11 @@ export async function ensureOverlay(currentVersion: string): Promise<string> {
 
   // Extract to disk
   mkdirSync(BIN_DIR, { recursive: true });
-  const buf = Buffer.from(overlayBase64, "base64");
-  writeFileSync(OVERLAY_PATH, buf);
+  const data = await Bun.file(embeddedPath).arrayBuffer();
+  writeFileSync(OVERLAY_PATH, Buffer.from(data));
   chmodSync(OVERLAY_PATH, 0o755);
   writeFileSync(VERSION_FILE, currentVersion);
 
-  console.log(`[summon] Extracted overlay to ${OVERLAY_PATH}`);
+  console.error(`[summon] Extracted overlay to ${OVERLAY_PATH}`);
   return OVERLAY_PATH;
 }

@@ -100,7 +100,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
         result.golemDebug = true;
         break;
 
-      case "update":
       case "--update":
         result.update = true;
         break;
