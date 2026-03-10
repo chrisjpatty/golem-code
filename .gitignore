@@ -1,5 +1,10 @@
 node_modules
 dist
+target
 .env
 *.tsbuildinfo
 models/
+
+# Auto-generated embedded assets
+*.generated.ts
+golem-overlay.bin

@@ -1,0 +1,29 @@
+{
+  "productName": "Golem Overlay",
+  "identifier": "com.golem-code.overlay",
+  "version": "0.0.1",
+  "build": {
+    "frontendDist": "./dist-placeholder"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "Golem Overlay",
+        "width": 900,
+        "height": 300,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "url": "about:blank"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' http://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline' http://localhost:*; connect-src 'self' http://localhost:* ws://localhost:*; img-src 'self' data: http://localhost:*"
+    }
+  }
+}

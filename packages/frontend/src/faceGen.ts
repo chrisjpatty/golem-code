@@ -380,9 +380,9 @@ export function createUpperFaceGeometry(p: FaceParams): FaceGeometryData {
 export function createJawGeometry(p: FaceParams): FaceGeometryData {
   const verts: [number, number, number][] = [
     // 0: left hinge
-    [-p.jawWidth, 0, -0.25],
+    [-p.jawWidth, -0.08, -0.25],
     // 1: right hinge
-    [p.jawWidth, 0, -0.25],
+    [p.jawWidth, -0.08, -0.25],
     // 2: left mouth corner
     [-p.mouthWidth, 0, 0.3],
     // 3: right mouth corner
@@ -460,29 +460,6 @@ export function createLeftEyeGeometry(p: FaceParams): THREE.BufferGeometry {
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
-}
-
-// --- Face color palette ---
-
-export const FACE_COLORS = [
-  "#cc1111", // default red
-  "#1155cc", // cobalt blue
-  "#11aa44", // emerald green
-  "#cc8811", // gold
-  "#8822cc", // purple
-  "#cc1177", // magenta
-  "#11aaaa", // teal
-  "#cc5511", // burnt orange
-  "#4466cc", // steel blue
-  "#44aa11", // lime
-  "#aa1166", // raspberry
-  "#888888", // silver
-] as const;
-
-export function getRandomUnusedColor(usedColors: Set<string>): string {
-  const available = FACE_COLORS.filter((c) => !usedColors.has(c));
-  const pool = available.length > 0 ? available : FACE_COLORS;
-  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 export function createRightEyeGeometry(p: FaceParams): THREE.BufferGeometry {

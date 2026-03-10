@@ -1,33 +1,80 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
+import type { ConnectionState } from "./useGolemSocket";
 
 type VoiceButtonProps = {
-  onPressStart: () => void;
-  onPressEnd: () => void;
-  transcript?: string;
-  panelOpen?: boolean;
+  onTranscript: (text: string) => void;
+  connectionState?: ConnectionState;
 };
 
-export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = false }: VoiceButtonProps) {
+export function VoiceButton({ onTranscript, connectionState = "connected" }: VoiceButtonProps) {
   const [pressed, setPressed] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const transcriptRef = useRef("");
 
   const handleDown = useCallback(() => {
     setPressed(true);
-    onPressStart();
-  }, [onPressStart]);
+    setTranscript("");
+    transcriptRef.current = "";
+
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      console.warn("[golem] SpeechRecognition not supported in this browser");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i]!;
+        if (result.isFinal) {
+          finalTranscript += result[0]!.transcript;
+        } else {
+          interimTranscript += result[0]!.transcript;
+        }
+      }
+      const text = finalTranscript || interimTranscript;
+      transcriptRef.current = text;
+      setTranscript(text);
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.warn("[golem] Speech recognition error:", event.error);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, []);
 
   const handleUp = useCallback(() => {
     setPressed(false);
-    onPressEnd();
-  }, [onPressEnd]);
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      recognition.stop();
+      recognitionRef.current = null;
+    }
+
+    const text = transcriptRef.current.trim();
+    if (text) {
+      onTranscript(text);
+    }
+
+    setTimeout(() => setTranscript(""), 3000);
+  }, [onTranscript]);
 
   return (
     <div
       style={{
         position: "fixed",
         bottom: 24,
-        left: panelOpen ? "25%" : "50%",
+        left: "50%",
         transform: "translateX(-50%)",
-        transition: "left 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -55,12 +102,7 @@ export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = 
       <button
         onMouseDown={handleDown}
         onMouseUp={handleUp}
-        onMouseLeave={() => {
-          if (pressed) {
-            setPressed(false);
-            onPressEnd();
-          }
-        }}
+        onMouseLeave={() => { if (pressed) handleUp(); }}
         onTouchStart={(e) => {
           e.preventDefault();
           handleDown();
@@ -94,6 +136,25 @@ export function VoiceButton({ onPressStart, onPressEnd, transcript, panelOpen = 
       >
         {pressed ? "..." : "SPEAK"}
       </button>
+      {connectionState !== "connected" && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 10,
+            color: connectionState === "connecting" ? "#aa8833" : "#cc4444",
+          }}
+        >
+          <div style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: connectionState === "connecting" ? "#aa8833" : "#cc4444",
+          }} />
+          {connectionState === "connecting" ? "connecting..." : "disconnected"}
+        </div>
+      )}
     </div>
   );
 }

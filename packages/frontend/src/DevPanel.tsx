@@ -2,9 +2,6 @@ import { type GolemFaceHandle } from "./GolemFace";
 
 export function DevPanel({
   faceRef,
-  onClearConversation,
-  autoApprove,
-  onToggleAutoApprove,
   onRandomFace,
   onResetFace,
   onRandomColor,
@@ -15,9 +12,6 @@ export function DevPanel({
   onRemoveAllSubagents,
 }: {
   faceRef: React.RefObject<GolemFaceHandle | null>;
-  onClearConversation: () => void;
-  autoApprove: boolean;
-  onToggleAutoApprove: () => void;
   onRandomFace: () => void;
   onResetFace: () => void;
   onRandomColor: () => void;
@@ -41,15 +35,6 @@ export function DevPanel({
         fontSize: 12,
       }}
     >
-      <Button
-        label={`Auto-Approve: ${autoApprove ? "ON" : "OFF"}`}
-        onClick={onToggleAutoApprove}
-        highlight={autoApprove}
-      />
-      <Button
-        label="Clear Conversation"
-        onClick={onClearConversation}
-      />
       <Button
         label="Start Speaking"
         onClick={() => faceRef.current?.startSpeaking()}
@@ -92,7 +77,7 @@ export function DevPanel({
       />
       <Button label="Smile" onClick={() => faceRef.current?.setExpression('smile')} />
       <Button label="Frown" onClick={() => faceRef.current?.setExpression('frown')} />
-<Button label="Oh" onClick={() => faceRef.current?.setExpression('oh')} />
+      <Button label="Oh" onClick={() => faceRef.current?.setExpression('oh')} />
       <Button label="Neutral" onClick={() => faceRef.current?.setExpression('neutral')} />
       <Button label="Random Face" onClick={onRandomFace} />
       <Button label="Reset Face" onClick={onResetFace} />

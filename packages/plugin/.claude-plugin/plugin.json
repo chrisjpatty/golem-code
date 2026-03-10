@@ -1,0 +1,8 @@
+{
+  "name": "golem-code",
+  "description": "Hooks for the Golem ambient companion — forwards Claude Code events to summon's local server",
+  "version": "0.0.1",
+  "author": {
+    "name": "Chris Patty"
+  }
+}

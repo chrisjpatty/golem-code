@@ -1,214 +1,267 @@
-import { useRef, useState, useCallback } from "react";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Environment } from "@react-three/drei";
-import { EffectComposer, Pixelation, Noise, Vignette, Bloom } from "@react-three/postprocessing";
-import { BlendFunction } from "postprocessing";
-import { GolemFace, type GolemFaceHandle } from "./GolemFace";
-import { SubagentFace } from "./SubagentFace";
+import { useRef, useState, useCallback, useMemo, type ReactNode } from "react";
+import { useThree, useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+import { AgentSlot, type AgentSlotHandle } from "./AgentSlot";
+import { GolemScene, type SceneMode } from "./GolemScene";
 import { DevPanel } from "./DevPanel";
-import { getRandomUnusedColor } from "./faceGen";
+import { getRandomUnusedColor } from "@golem-code/types";
 import { VoiceButton } from "./VoiceButton";
-import { OutputPanel } from "./OutputPanel";
 import { useGolemSocket } from "./useGolemSocket";
-import { useVoiceCapture } from "./audio/useVoiceCapture";
-import { useAudioPlayback } from "./audio/useAudioPlayback";
-import { useStreamingBuffers } from "./hooks/useStreamingBuffers";
-import { useSubagentManager } from "./hooks/useSubagentManager";
-import { usePermissions } from "./hooks/usePermissions";
-import { useOutputEntries } from "./hooks/useOutputEntries";
+import { useAgentManager, type AgentInfo } from "./hooks/useAgentManager";
+import { useFaceClickthrough } from "./hooks/useFaceClickthrough";
 import type { GolemEvent, GolemCommand } from "@golem-code/types";
+import type { GolemFaceHandle } from "./GolemFace";
+
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const SCENE_MODE: SceneMode =
+  URL_PARAMS.get("mode") === "overlay" ? "overlay" : "browser";
+const GOLEM_DEBUG = URL_PARAMS.get("golem-debug") === "1";
+
+/** Spacing between agent faces in scene units */
+const AGENT_SPACING = 2.5;
+
+/**
+ * Anchors scene content to the bottom-right in overlay mode.
+ * In browser mode, renders children as-is (centered).
+ */
+function SceneAnchor({ mode, children }: { mode: SceneMode; children: ReactNode }) {
+  const { viewport } = useThree();
+  if (mode !== "overlay") return <>{children}</>;
+
+  // Inset from viewport edge so horns/ears/bob animation aren't clipped
+  const padX = 0.45;
+  const padY = 0.55;
+  return (
+    <group position={[viewport.width / 2 - padX, -viewport.height / 2 + padY, 0]}>
+      {children}
+    </group>
+  );
+}
+
+/** Hit radius in CSS pixels — must match HIT_RADIUS in overlay main.rs */
+const DEBUG_HIT_RADIUS_PX = 60;
+
+/**
+ * Tracks face world positions, handles click-through interaction,
+ * and renders debug circles showing the Rust overlay's hit regions.
+ */
+function FaceClickLayer({
+  agents,
+  positionMap,
+  faceScale,
+  sendCommand,
+}: {
+  agents: AgentInfo[];
+  positionMap: Map<string, number>;
+  faceScale: number;
+  sendCommand: (cmd: GolemCommand) => void;
+}) {
+  const { viewport, size } = useThree();
+
+  const handleFaceClick = useCallback(
+    (agentId: string) => {
+      sendCommand({ type: "focus:agent", agentId });
+    },
+    [sendCommand],
+  );
+
+  const { updateFaceTargets } = useFaceClickthrough(handleFaceClick);
+
+  // Each frame, compute face world positions and update the hit targets
+  useFrame(() => {
+    const anchorX = viewport.width / 2 - 0.45;
+    const anchorY = -viewport.height / 2 + 0.55;
+
+    const targets = agents.map((agent) => {
+      const agentX = positionMap.get(agent.agentId) ?? 0;
+      return {
+        agentId: agent.agentId,
+        worldPos: new THREE.Vector3(anchorX + agentX, anchorY, 0),
+      };
+    });
+
+    updateFaceTargets(targets);
+  });
+
+  // Convert the hit radius from CSS pixels to scene units
+  // viewport.width (scene units) maps to size.width (CSS pixels)
+  const pxToScene = viewport.width / size.width;
+  const hitRadiusScene = DEBUG_HIT_RADIUS_PX * pxToScene;
+  const verticalStretch = 1.25; // oval: 25% taller than wide
+  const yOffsetPx = -4; // shift up by 4 CSS pixels
+  const yOffsetScene = yOffsetPx * pxToScene;
+
+  // Compute the same positions used for hit testing
+  const anchorX = viewport.width / 2 - 0.45;
+  const anchorY = -viewport.height / 2 + 0.55;
+
+  if (!GOLEM_DEBUG) return null;
+
+  return (
+    <>
+      {agents.map((agent) => {
+        const agentX = positionMap.get(agent.agentId) ?? 0;
+        return (
+          <mesh
+            key={agent.agentId}
+            position={[anchorX + agentX, anchorY - yOffsetScene, 2]}
+            scale={[1, verticalStretch, 1]}
+            renderOrder={999}
+          >
+            <ringGeometry args={[hitRadiusScene * 0.95, hitRadiusScene, 48]} />
+            <meshBasicMaterial
+              color="#ff0000"
+              transparent
+              opacity={0.4}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+        );
+      })}
+    </>
+  );
+}
 
 export function App() {
-  const faceRef = useRef<GolemFaceHandle>(null);
-  const [transcript, setTranscript] = useState("");
-  const activeToolCount = useRef(0);
-  const sendCommandRef = useRef<(cmd: GolemCommand) => void>(undefined);
+  const { agents, removingAgents, addAgent, markRemoving, onAgentRemoved } = useAgentManager();
 
-  const [faceSeed, setFaceSeed] = useState<number | undefined>(undefined);
-  const [faceColor, setFaceColor] = useState<string | undefined>(undefined);
-  const usedColors = useRef(new Set<string>());
+  // Map of agentId → AgentSlotHandle ref for routing events
+  const slotRefs = useRef(new Map<string, React.RefObject<AgentSlotHandle | null>>());
 
-  // Composed hooks
-  const entries = useOutputEntries();
-  const streaming = useStreamingBuffers(entries.setOutputEntries);
-  const permissions = usePermissions(sendCommandRef, entries.setOutputEntries);
-  const subagents = useSubagentManager();
-
-  const { onTtsStart, feedAudioChunk, onTtsEnd } = useAudioPlayback({
-    onPlaybackComplete: () => {
-      faceRef.current?.stopSpeaking();
-    },
-  });
+  // Ensure a ref exists for each agent
+  function getSlotRef(agentId: string): React.RefObject<AgentSlotHandle | null> {
+    let ref = slotRefs.current.get(agentId);
+    if (!ref) {
+      ref = { current: null };
+      slotRefs.current.set(agentId, ref);
+    }
+    return ref;
+  }
 
   const handleEvent = useCallback(
     (event: GolemEvent) => {
       switch (event.type) {
-        case "session:init":
-          entries.openPanel();
-          streaming.resetBuffers();
+        case "agent:init":
+          addAgent(event.agentId, event.seed, event.color);
           break;
 
-        case "text:delta":
-          streaming.appendTextDelta(event.text);
+        case "agent:disconnect":
+          markRemoving(event.agentId);
           break;
 
-        case "thinking:delta":
-          streaming.appendThinkingDelta(event.text);
-          break;
-
-        case "stt:transcript":
-          setTranscript(event.text);
-          if (event.isFinal) {
-            entries.addUserMessage(event.text);
-            setTimeout(() => setTranscript(""), 3000);
+        default:
+          // Route to the correct AgentSlot by agentId
+          if ("agentId" in event) {
+            const ref = slotRefs.current.get(event.agentId);
+            ref?.current?.handleEvent(event);
           }
-          break;
-
-        case "permission:request":
-          permissions.handlePermissionRequest(event);
-          break;
-
-        case "tool:start":
-          activeToolCount.current++;
-          faceRef.current?.startEyeGlow();
-          streaming.flushTextBuffer();
-          streaming.flushThinkingBuffer();
-          if (event.toolName === "Task") {
-            subagents.spawnSubagent(
-              event.toolUseId,
-              typeof event.input.description === "string" ? event.input.description : "",
-            );
-          }
-          entries.addToolStart(event.toolName, event.input);
-          break;
-
-        case "tool:result":
-          activeToolCount.current = Math.max(0, activeToolCount.current - 1);
-          if (activeToolCount.current === 0) {
-            faceRef.current?.stopEyeGlow();
-          }
-          subagents.markRemoving(event.toolUseId);
-          entries.addToolResult(event.result);
-          break;
-
-        case "tool:summary":
-          entries.addToolSummary(event.summary);
-          break;
-
-        case "status:update":
-          entries.addStatusUpdate(event.status);
-          break;
-
-        case "session:result":
-          activeToolCount.current = 0;
-          faceRef.current?.stopEyeGlow();
-          subagents.markAllRemoving();
-          streaming.flushTextBuffer();
-          streaming.flushThinkingBuffer();
-          entries.addSessionResult(event);
-          break;
-
-        case "conversation:cleared":
-          entries.clearAll();
-          subagents.clearAll();
-          streaming.resetBuffers();
-          break;
-
-        case "tts:start":
-          onTtsStart(event.sampleRate);
-          faceRef.current?.startSpeaking();
-          break;
-
-        case "tts:end":
-          onTtsEnd();
           break;
       }
     },
-    [onTtsStart, onTtsEnd, streaming, entries, permissions, subagents],
+    [addAgent, markRemoving],
   );
 
-  const { sendCommand, getSocket } = useGolemSocket({
+  const { sendCommand, connectionState } = useGolemSocket({
     onEvent: handleEvent,
-    onAudioChunk: feedAudioChunk,
   });
-  sendCommandRef.current = sendCommand;
 
-  const { startRecording, stopRecording } = useVoiceCapture({ getSocket });
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      sendCommand({ type: "inject", text });
+    },
+    [sendCommand],
+  );
 
-  const handleVoiceStart = useCallback(() => {
-    startRecording();
-    faceRef.current?.lookAtRandom();
-  }, [startRecording]);
+  // Scale face down in overlay mode so it fits the small viewport height
+  const faceScale = SCENE_MODE === "overlay" ? 0.18 : 1;
 
-  const handleVoiceEnd = useCallback(() => {
-    stopRecording();
-    faceRef.current?.lookCenter();
-  }, [stopRecording]);
+  // Compute X positions for non-removing agents only, so removing agents
+  // don't affect the layout and remaining agents slide into place.
+  const activeAgents = agents.filter((a) => !removingAgents.has(a.agentId));
+  const agentPositions = useMemo(() => {
+    const effectiveSpacing = Math.pow(faceScale, 0.7) * AGENT_SPACING;
+    const count = activeAgents.length;
+    if (SCENE_MODE === "overlay") {
+      return activeAgents.map((_, i) => -i * effectiveSpacing);
+    }
+    const totalWidth = (count - 1) * effectiveSpacing;
+    const startX = -totalWidth / 2;
+    return activeAgents.map((_, i) => startX + i * effectiveSpacing);
+  }, [activeAgents.length, faceScale]);
+
+  // Build a position map for all agents (active get layout positions, removing get their last position)
+  const positionMap = useMemo(() => {
+    const map = new Map<string, number>();
+    activeAgents.forEach((a, i) => map.set(a.agentId, agentPositions[i]));
+    // Removing agents keep their current position (they'll scale to 0 in place)
+    for (const a of agents) {
+      if (!map.has(a.agentId)) {
+        map.set(a.agentId, 0); // will be off-screen as they scale out
+      }
+    }
+    return map;
+  }, [agents, activeAgents, agentPositions]);
+
+  // When multiple agents, constrain each subagent's wander bounds to its slot
+  const boundsWidth = activeAgents.length <= 1 ? undefined : AGENT_SPACING;
+
+  // For DevPanel compatibility, expose the first agent's face ref
+  const firstAgentRef = agents.length > 0 ? getSlotRef(agents[0].agentId) : null;
+
+  const handleAgentRemoved = useCallback((agentId: string) => {
+    onAgentRemoved(agentId);
+    slotRefs.current.delete(agentId);
+  }, [onAgentRemoved]);
 
   return (
     <>
-      <Canvas
-        orthographic
-        camera={{ position: [0, 0, 5], zoom: 180 }}
-        gl={{ antialias: true, toneMapping: 3 /* ACESFilmic */ }}
-      >
-        <color attach="background" args={["#1a0a0a"]} />
-        <fog attach="fog" args={["#1a0a0a", 8, 20]} />
-        <Environment files="/studio_kominka_02_1k.hdr" background={false} environmentIntensity={3.0} environmentRotation={[(-15 * Math.PI) / 180, (-15 * Math.PI) / 180, 0]} />
-        <directionalLight position={[0, -2, 3]} intensity={4} color="#ff6644" />
-        <GolemFace ref={faceRef} slideLeft={entries.panelOpen} seed={faceSeed} color={faceColor} />
-        {subagents.activeSubagents.map((sub) => (
-          <SubagentFace
-            key={sub.toolUseId}
-            subagent={sub}
-            panelOpen={entries.panelOpen}
-            positions={subagents.subagentPositions}
-            targetScale={subagents.targetScale}
-            removing={subagents.removingSubagents.has(sub.toolUseId)}
-            onRemoved={() => subagents.onSubagentRemoved(sub.toolUseId)}
+      <GolemScene mode={SCENE_MODE}>
+        <SceneAnchor mode={SCENE_MODE}>
+          {agents.map((agent) => (
+            <AgentSlot
+              key={agent.agentId}
+              ref={getSlotRef(agent.agentId)}
+              agentId={agent.agentId}
+              seed={agent.seed}
+              color={agent.color}
+              positionX={positionMap.get(agent.agentId) ?? 0}
+              boundsWidth={boundsWidth}
+              faceScale={faceScale}
+              removing={removingAgents.has(agent.agentId)}
+              onRemoved={() => handleAgentRemoved(agent.agentId)}
+            />
+          ))}
+        </SceneAnchor>
+        {SCENE_MODE === "overlay" && (
+          <FaceClickLayer
+            agents={activeAgents}
+            positionMap={positionMap}
+            faceScale={faceScale}
+            sendCommand={sendCommand}
           />
-        ))}
-        <OrbitControls enablePan={false} />
-        <EffectComposer>
-          <Pixelation granularity={10} />
-          <Bloom luminanceThreshold={0.3} luminanceSmoothing={0.9} intensity={0.8} />
-          <Noise opacity={0.15} blendFunction={BlendFunction.OVERLAY} />
-          <Vignette offset={0.3} darkness={0.7} />
-        </EffectComposer>
-      </Canvas>
-      <DevPanel
-        faceRef={faceRef}
-        onClearConversation={() => sendCommand({ type: "conversation:clear" })}
-        autoApprove={permissions.autoApprove}
-        onToggleAutoApprove={permissions.toggleAutoApprove}
-        onRandomFace={() => setFaceSeed(Math.floor(Math.random() * 2 ** 32))}
-        onResetFace={() => setFaceSeed(undefined)}
-        onRandomColor={() => {
-          const color = getRandomUnusedColor(usedColors.current);
-          usedColors.current.add(color);
-          setFaceColor(color);
-        }}
-        onResetColor={() => {
-          usedColors.current.clear();
-          setFaceColor(undefined);
-        }}
-        subagentCount={subagents.activeSubagents.length}
-        onSpawnSubagent={subagents.devSpawn}
-        onRemoveSubagent={subagents.devRemoveOldest}
-        onRemoveAllSubagents={subagents.markAllRemoving}
-      />
-      <OutputPanel
-        open={entries.panelOpen}
-        entries={entries.outputEntries}
-        onClose={entries.closePanel}
-        onPermissionRespond={permissions.handlePermissionRespond}
-      />
-      <VoiceButton
-        onPressStart={handleVoiceStart}
-        onPressEnd={handleVoiceEnd}
-        transcript={transcript}
-        panelOpen={entries.panelOpen}
-      />
+        )}
+      </GolemScene>
+      {SCENE_MODE === "browser" && (
+        <>
+          <DevPanel
+            faceRef={firstAgentRef as any}
+            onRandomFace={() => {}}
+            onResetFace={() => {}}
+            onRandomColor={() => {}}
+            onResetColor={() => {}}
+            subagentCount={0}
+            onSpawnSubagent={() => {}}
+            onRemoveSubagent={() => {}}
+            onRemoveAllSubagents={() => {}}
+          />
+          <VoiceButton
+            onTranscript={handleVoiceTranscript}
+            connectionState={connectionState}
+          />
+        </>
+      )}
     </>
   );
 }

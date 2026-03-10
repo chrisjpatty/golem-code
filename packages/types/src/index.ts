@@ -1,216 +1,102 @@
 /**
- * Golem events — simplified view of the SDK message stream
- * designed for visualization in the 3D frontend.
+ * Golem events — minimal protocol for the ambient companion.
+ * All events carry an agentId so the frontend can route them
+ * to the correct face in multi-instance setups.
  */
 
-// -- Binary protocol headers (WebSocket binary frames) --
-
-/** client → server: Int16LE PCM microphone audio */
-export const HEADER_MIC_AUDIO = 0x01;
-/** server → client: Float32LE PCM TTS audio */
-export const HEADER_TTS_AUDIO = 0x02;
-
-// -- Session lifecycle --
-
-export type GolemSessionInit = {
-  type: "session:init";
-  sessionId: string;
-  model: string;
-  tools: string[];
-  cwd: string;
-  timestamp: number;
-};
-
-export type GolemSessionResult = {
-  type: "session:result";
-  sessionId: string;
-  success: boolean;
-  result?: string;
-  errors?: string[];
-  durationMs: number;
-  totalCostUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-  numTurns: number;
-  timestamp: number;
-};
-
-// -- Assistant text --
-
-export type GolemTextDelta = {
-  type: "text:delta";
-  text: string;
-  timestamp: number;
-};
-
-export type GolemThinkingDelta = {
-  type: "thinking:delta";
-  text: string;
-  timestamp: number;
-};
-
-// -- Tool use --
+// -- Server → Client events --
 
 export type GolemToolStart = {
   type: "tool:start";
+  agentId: string;
   toolUseId: string;
   toolName: string;
-  input: Record<string, unknown>;
-  parentToolUseId: string | null;
-  timestamp: number;
 };
 
-export type GolemToolProgress = {
-  type: "tool:progress";
+export type GolemToolEnd = {
+  type: "tool:end";
+  agentId: string;
   toolUseId: string;
-  toolName: string;
-  elapsedSeconds: number;
-  timestamp: number;
 };
-
-export type GolemToolResult = {
-  type: "tool:result";
-  toolUseId: string;
-  result: unknown;
-  timestamp: number;
-};
-
-// -- Subagents --
 
 export type GolemSubagentStart = {
   type: "subagent:start";
-  taskId: string;
-  timestamp: number;
+  agentId: string;
+  toolUseId: string;
+  description: string;
 };
 
-export type GolemSubagentComplete = {
-  type: "subagent:complete";
-  taskId: string;
-  status: "completed" | "failed" | "stopped";
-  summary: string;
-  timestamp: number;
+export type GolemSubagentEnd = {
+  type: "subagent:end";
+  agentId: string;
+  toolUseId: string;
 };
 
-// -- Permission approval --
-
-export type GolemPermissionSuggestion = {
-  update: unknown;   // opaque PermissionUpdate — frontend never inspects
-  label: string;     // human-readable, generated server-side
+export type GolemActivity = {
+  type: "activity";
+  agentId: string;
+  state: "active" | "idle";
 };
 
 export type GolemPermissionRequest = {
   type: "permission:request";
-  requestId: string;
+  agentId: string;
   toolName: string;
-  toolInput: Record<string, unknown>;
-  decisionReason?: string;
-  suggestions?: GolemPermissionSuggestion[];
-  timestamp: number;
 };
 
-// -- User question (AskUserQuestion) --
-
-export type GolemQuestionOption = {
-  label: string;
-  description: string;
+export type GolemTurnEnd = {
+  type: "turn:end";
+  agentId: string;
 };
 
-export type GolemQuestion = {
-  question: string;
-  header: string;
-  options: GolemQuestionOption[];
-  multiSelect: boolean;
+export type GolemAgentInit = {
+  type: "agent:init";
+  agentId: string;
+  seed: number;
+  color: string;
 };
 
-export type GolemQuestionAsk = {
-  type: "question:ask";
-  requestId: string;
-  questions: GolemQuestion[];
-  timestamp: number;
+export type GolemAgentDisconnect = {
+  type: "agent:disconnect";
+  agentId: string;
 };
-
-// -- Voice / STT / TTS --
-
-export type GolemSttTranscript = {
-  type: "stt:transcript";
-  text: string;
-  isFinal: boolean;
-  timestamp: number;
-};
-
-export type GolemTtsStart = {
-  type: "tts:start";
-  text: string;
-  sampleRate: number;
-  timestamp: number;
-};
-
-export type GolemTtsEnd = {
-  type: "tts:end";
-  timestamp: number;
-};
-
-export type GolemSpeechText = {
-  type: "speech:text";
-  original: string;
-  summarized: string;
-  mode: "response" | "tool_intent";
-  timestamp: number;
-};
-
-// -- Tool use summary --
-
-export type GolemToolUseSummary = {
-  type: "tool:summary";
-  summary: string;
-  toolUseIds: string[];
-  timestamp: number;
-};
-
-// -- Status updates --
-
-export type GolemStatusUpdate = {
-  type: "status:update";
-  status: "compacting" | null;
-  timestamp: number;
-};
-
-// -- Conversation --
-
-export type GolemConversationCleared = {
-  type: "conversation:cleared";
-  timestamp: number;
-};
-
-// -- Server → Client events union --
 
 export type GolemEvent =
-  | GolemSessionInit
-  | GolemSessionResult
-  | GolemTextDelta
-  | GolemThinkingDelta
   | GolemToolStart
-  | GolemToolProgress
-  | GolemToolResult
-  | GolemToolUseSummary
+  | GolemToolEnd
   | GolemSubagentStart
-  | GolemSubagentComplete
+  | GolemSubagentEnd
+  | GolemActivity
   | GolemPermissionRequest
-  | GolemQuestionAsk
-  | GolemStatusUpdate
-  | GolemSttTranscript
-  | GolemTtsStart
-  | GolemTtsEnd
-  | GolemSpeechText
-  | GolemConversationCleared;
+  | GolemTurnEnd
+  | GolemAgentInit
+  | GolemAgentDisconnect;
 
 // -- Client → Server commands --
 
 export type GolemCommand =
-  | { type: "query:start"; prompt: string }
-  | { type: "query:stop" }
-  | { type: "permission:response"; requestId: string; decision: "allow" | "allow-always" | "deny" }
-  | { type: "question:answer"; requestId: string; answers: Record<string, string> }
-  | { type: "voice:start"; sampleRate: number }
-  | { type: "voice:stop" }
-  | { type: "conversation:clear" };
+  | { type: "inject"; text: string }
+  | { type: "focus:agent"; agentId: string };
+
+// --- Face color palette ---
+
+export const FACE_COLORS = [
+  "#cc1111", // default red
+  "#1155cc", // cobalt blue
+  "#11aa44", // emerald green
+  "#cc8811", // gold
+  "#8822cc", // purple
+  "#cc1177", // magenta
+  "#11aaaa", // teal
+  "#cc5511", // burnt orange
+  "#4466cc", // steel blue
+  "#44aa11", // lime
+  "#aa1166", // raspberry
+  "#888888", // silver
+] as const;
+
+export function getRandomUnusedColor(usedColors: Set<string>): string {
+  const available = FACE_COLORS.filter((c) => !usedColors.has(c));
+  const pool = available.length > 0 ? available : FACE_COLORS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}

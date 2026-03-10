@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from "react";
 import { type ActiveSubagent, type SubagentPositions } from "../SubagentFace";
-import { getRandomUnusedColor } from "../faceGen";
+import { getRandomUnusedColor } from "@golem-code/types";
 
 const BASE_SCALE = 0.27;
 const MIN_SCALE = 0.14;
