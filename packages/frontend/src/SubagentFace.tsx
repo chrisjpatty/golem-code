@@ -2,11 +2,7 @@ import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GolemFace, type GolemFaceHandle } from "./GolemFace";
-
-// Frame-rate independent lerp
-function damp(current: number, target: number, speed: number, delta: number): number {
-  return current + (target - current) * (1 - Math.exp(-speed * delta));
-}
+import { damp } from "./utils/math";
 
 export type ActiveSubagent = {
   toolUseId: string;

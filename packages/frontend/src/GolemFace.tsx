@@ -9,11 +9,7 @@ import {
   createLeftEyeGeometry,
   createRightEyeGeometry,
 } from "./faceGen";
-
-// Frame-rate independent lerp: same visual result regardless of FPS
-function damp(current: number, target: number, speed: number, delta: number): number {
-  return current + (target - current) * (1 - Math.exp(-speed * delta));
-}
+import { damp } from "./utils/math";
 
 export type MouthExpression = 'neutral' | 'smile' | 'frown' | 'oh';
 

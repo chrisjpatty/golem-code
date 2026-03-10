@@ -7,14 +7,9 @@ import { createSideChannelServer } from "./sideChannelServer";
 import { spawnClaude, injectText, restoreTerminal, type PtyCleanup } from "./ptySpawner";
 import { createHookTransform } from "./hookTransform";
 import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary } from "./instanceRegistry";
-import type { GolemAgentInit, GolemEvent } from "@golem-code/types";
+import { FACE_COLORS, type GolemAgentInit, type GolemEvent } from "@golem-code/types";
 import { focusMyTerminal } from "./terminalFocus";
 
-// Face colors for agent identity (must match frontend/src/faceGen.ts FACE_COLORS)
-const FACE_COLORS = [
-  "#cc1111", "#1155cc", "#11aa44", "#cc8811", "#8822cc", "#cc1177",
-  "#11aaaa", "#cc5511", "#4466cc", "#44aa11", "#aa1166", "#888888",
-];
 
 // When running from source, resolve the frontend dist from the repo structure.
 // When compiled, frontend assets are embedded via embeddedAssets.generated.ts.

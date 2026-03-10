@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { AgentSlot, type AgentSlotHandle } from "./AgentSlot";
 import { GolemScene, type SceneMode } from "./GolemScene";
 import { DevPanel } from "./DevPanel";
-import { getRandomUnusedColor } from "./faceGen";
+import { getRandomUnusedColor } from "@golem-code/types";
 import { VoiceButton } from "./VoiceButton";
 import { useGolemSocket } from "./useGolemSocket";
 import { useAgentManager, type AgentInfo } from "./hooks/useAgentManager";

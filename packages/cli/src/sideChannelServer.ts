@@ -8,7 +8,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { resolve, normalize } from "path";
-import type { GolemEvent, GolemCommand, GolemAgentInit } from "@golem-code/types";
+import { getRandomUnusedColor, type GolemEvent, type GolemCommand, type GolemAgentInit } from "@golem-code/types";
 
 type WSData = { id: string; role: "client" | "peer" };
 
@@ -223,14 +223,7 @@ export function createSideChannelServer(
                 [...knownAgents.values()].map((a) => a.color)
               );
               if (usedColors.has(event.color)) {
-                const FACE_COLORS = [
-                  "#cc1111", "#1155cc", "#11aa44", "#cc8811", "#8822cc", "#cc1177",
-                  "#11aaaa", "#cc5511", "#4466cc", "#44aa11", "#aa1166", "#888888",
-                ];
-                const available = FACE_COLORS.filter((c) => !usedColors.has(c));
-                if (available.length > 0) {
-                  event.color = available[Math.floor(Math.random() * available.length)];
-                }
+                event.color = getRandomUnusedColor(usedColors);
               }
               knownAgents.set(event.agentId, event);
               peerByAgent.set(event.agentId, ws);
@@ -242,9 +235,10 @@ export function createSideChannelServer(
             return;
           }
 
-          // Client messages: commands
+          // Client messages: commands (only from local frontend clients, not peers)
           const cmd = msg as GolemCommand;
           if (cmd.type === "inject" && onInject) {
+            if (typeof cmd.text !== "string" || cmd.text.length > 10000) return;
             onInject(cmd.text);
           } else if (cmd.type === "focus:agent") {
             // Check if this is for a peer agent
@@ -283,7 +277,7 @@ export function createSideChannelServer(
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
     try {
-      server = Bun.serve<WSData>({ ...serveConfig, port: port + attempt });
+      server = Bun.serve<WSData>({ ...serveConfig, hostname: "127.0.0.1", port: port + attempt });
       lastError = null;
       break;
     } catch (err: any) {

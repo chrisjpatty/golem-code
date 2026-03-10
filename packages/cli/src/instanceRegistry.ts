@@ -49,35 +49,36 @@ export async function findPrimary(): Promise<number | null> {
     return null;
   }
 
+  // Parse all instance files and filter to primaries
+  const candidates: { filePath: string; data: InstanceData }[] = [];
   for (const file of files) {
     const filePath = join(INSTANCES_DIR, file);
-    let data: InstanceData;
     try {
       const raw = readFileSync(filePath, "utf-8").trim();
-      // Handle legacy format (plain port number)
       const parsed = raw.startsWith("{") ? JSON.parse(raw) : { port: parseInt(raw, 10), primary: false };
-      data = parsed;
-      if (isNaN(data.port)) throw new Error("invalid");
+      if (isNaN(parsed.port)) throw new Error("invalid");
+      if (parsed.primary) candidates.push({ filePath, data: parsed });
     } catch {
-      try { unlinkSync(filePath); } catch {}
-      continue;
-    }
-
-    if (!data.primary) continue;
-
-    // Check if the primary is still alive
-    try {
-      const res = await fetch(`http://localhost:${data.port}/health`, {
-        signal: AbortSignal.timeout(500),
-      });
-      if (res.ok) return data.port;
-    } catch {
-      // Dead primary — clean up
       try { unlinkSync(filePath); } catch {}
     }
   }
 
-  return null;
+  // Health-check all primaries in parallel
+  const results = await Promise.all(
+    candidates.map(async ({ filePath, data }) => {
+      try {
+        const res = await fetch(`http://localhost:${data.port}/health`, {
+          signal: AbortSignal.timeout(500),
+        });
+        if (res.ok) return data.port;
+      } catch {
+        try { unlinkSync(filePath); } catch {}
+      }
+      return null;
+    })
+  );
+
+  return results.find((port) => port !== null) ?? null;
 }
 
 /** Remove stale instance files (ports that aren't responding). */
@@ -89,28 +90,31 @@ export async function cleanStaleInstances(): Promise<void> {
     return;
   }
 
+  // Parse all instance files, removing corrupt ones
+  const instances: { filePath: string; port: number }[] = [];
   for (const file of files) {
     const filePath = join(INSTANCES_DIR, file);
-    let port: number;
     try {
       const raw = readFileSync(filePath, "utf-8").trim();
       const parsed = raw.startsWith("{") ? JSON.parse(raw) : { port: parseInt(raw, 10) };
-      port = parsed.port;
-      if (isNaN(port)) throw new Error("invalid");
+      if (isNaN(parsed.port)) throw new Error("invalid");
+      instances.push({ filePath, port: parsed.port });
     } catch {
-      // Corrupt file — remove it
-      try { unlinkSync(filePath); } catch {}
-      continue;
-    }
-
-    try {
-      const res = await fetch(`http://localhost:${port}/health`, {
-        signal: AbortSignal.timeout(500),
-      });
-      if (!res.ok) throw new Error("unhealthy");
-    } catch {
-      // Port not responding — stale instance
       try { unlinkSync(filePath); } catch {}
     }
   }
+
+  // Health-check all instances in parallel
+  await Promise.all(
+    instances.map(async ({ filePath, port }) => {
+      try {
+        const res = await fetch(`http://localhost:${port}/health`, {
+          signal: AbortSignal.timeout(500),
+        });
+        if (!res.ok) throw new Error("unhealthy");
+      } catch {
+        try { unlinkSync(filePath); } catch {}
+      }
+    })
+  );
 }

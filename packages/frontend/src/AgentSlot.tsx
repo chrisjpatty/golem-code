@@ -5,11 +5,7 @@ import { GolemFace, type GolemFaceHandle } from "./GolemFace";
 import { SubagentFace } from "./SubagentFace";
 import { useSubagentManager } from "./hooks/useSubagentManager";
 import type { GolemEvent } from "@golem-code/types";
-
-// Frame-rate independent lerp
-function damp(current: number, target: number, speed: number, delta: number): number {
-  return current + (target - current) * (1 - Math.exp(-speed * delta));
-}
+import { damp } from "./utils/math";
 
 export type AgentSlotHandle = {
   handleEvent: (event: GolemEvent) => void;

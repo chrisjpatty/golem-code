@@ -77,3 +77,26 @@ export type GolemEvent =
 export type GolemCommand =
   | { type: "inject"; text: string }
   | { type: "focus:agent"; agentId: string };
+
+// --- Face color palette ---
+
+export const FACE_COLORS = [
+  "#cc1111", // default red
+  "#1155cc", // cobalt blue
+  "#11aa44", // emerald green
+  "#cc8811", // gold
+  "#8822cc", // purple
+  "#cc1177", // magenta
+  "#11aaaa", // teal
+  "#cc5511", // burnt orange
+  "#4466cc", // steel blue
+  "#44aa11", // lime
+  "#aa1166", // raspberry
+  "#888888", // silver
+] as const;
+
+export function getRandomUnusedColor(usedColors: Set<string>): string {
+  const available = FACE_COLORS.filter((c) => !usedColors.has(c));
+  const pool = available.length > 0 ? available : FACE_COLORS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}

@@ -85,9 +85,13 @@ export function useFaceClickthrough(
   useEffect(() => {
     const canvas = gl.domElement;
 
-    // Track mousedown position to distinguish click from drag
+    // Track mousedown position to distinguish click from drag.
+    // We track dragged separately because Rust moves the window during drag,
+    // which shifts the coordinate system — so clientX/clientY at mouseup can
+    // appear close to mousedown even after a large drag.
     let mouseDownPos: { x: number; y: number } | null = null;
     let mouseDownHit: string | null = null;
+    let didDrag = false;
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
@@ -98,6 +102,7 @@ export function useFaceClickthrough(
       if (hit) {
         mouseDownPos = { x: e.clientX, y: e.clientY };
         mouseDownHit = hit;
+        didDrag = false;
       }
     };
 
@@ -112,6 +117,7 @@ export function useFaceClickthrough(
         const dx = e.clientX - mouseDownPos.x;
         const dy = e.clientY - mouseDownPos.y;
         if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+          didDrag = true;
           canvas.style.cursor = "grabbing";
           return;
         }
@@ -124,23 +130,20 @@ export function useFaceClickthrough(
     const onMouseUp = (e: MouseEvent) => {
       if (e.button !== 0) return;
 
-      // Only fire click if cursor didn't move (drag was handled by Rust)
-      if (mouseDownPos && mouseDownHit) {
-        const dx = e.clientX - mouseDownPos.x;
-        const dy = e.clientY - mouseDownPos.y;
-        if (dx * dx + dy * dy <= DRAG_THRESHOLD * DRAG_THRESHOLD) {
-          const rect = canvas.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-          const hit = hitTest(x, y);
-          if (hit && hit === mouseDownHit) {
-            onFaceClick(hit);
-          }
+      // Only fire click if no drag movement was detected during this gesture
+      if (mouseDownPos && mouseDownHit && !didDrag) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const hit = hitTest(x, y);
+        if (hit && hit === mouseDownHit) {
+          onFaceClick(hit);
         }
       }
 
       mouseDownPos = null;
       mouseDownHit = null;
+      didDrag = false;
       canvas.style.cursor = "";
     };
 

@@ -19,7 +19,8 @@ export function focusMyTerminal(): void {
   const termProgram = process.env.TERM_PROGRAM;
   if (!termProgram) return;
 
-  const appName = TERM_PROGRAM_MAP[termProgram] ?? termProgram;
+  const appName = TERM_PROGRAM_MAP[termProgram];
+  if (!appName) return; // Only allow known terminals — prevents injection via TERM_PROGRAM
 
   try {
     Bun.spawn(
