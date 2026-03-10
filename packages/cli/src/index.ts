@@ -209,7 +209,7 @@ async function main() {
   };
 
   // Check if an existing primary (with overlay) is running
-  const existingPrimaryPort = args.overlay ? await findPrimary() : null;
+  const existingPrimaryPort = !args.browser ? await findPrimary() : null;
 
   if (existingPrimaryPort) {
     // ── Peer mode: connect to existing primary ──
@@ -330,7 +330,7 @@ async function runAsPrimary(
   broadcastEvent = (event) => server.broadcast(event);
 
   // Register as primary so peers can find us
-  const isPrimary = args.overlay ?? false;
+  const isPrimary = !args.browser;
   instanceId = registerInstance(server.port, isPrimary);
 
   const url = `http://localhost:${server.port}`;
@@ -340,10 +340,12 @@ async function runAsPrimary(
     console.log(`[summon] Dev mode: start the frontend separately with "cd packages/frontend && bun run dev"`);
   }
 
-  if (args.overlay) {
+  if (args.browser) {
+    if (!args.noOpen && !args.dev) {
+      openBrowser(url);
+    }
+  } else {
     overlayProc = launchOverlay(url);
-  } else if (!args.noOpen && !args.dev) {
-    openBrowser(url);
   }
 
   function cleanup(code: number) {
@@ -380,8 +382,8 @@ Options:
   -r, --resume <session-id>     Resume a specific session
   --cwd <dir>                   Working directory (default: current directory)
   --port <port>                 Golem server port (default: 6661)
-  --no-open                     Don't auto-open the browser
-  --overlay                     Launch as transparent desktop overlay instead of browser
+  --browser                     Open in browser instead of desktop overlay
+  --no-open                     Don't auto-open the browser (with --browser)
   --dev                         Dev mode: skip frontend build and static serving
   -v, --version                 Show version
   -h, --help                    Show this help

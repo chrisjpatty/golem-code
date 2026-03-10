@@ -166,7 +166,7 @@ function useVertexGlitch({ geo, baseVertCount, baseIndexCount }: GlitchGeo) {
         }
         js.glitching = true;
         js.restoreAt = t + 0.05 + Math.random() * 0.1;
-        js.nextGlitchAt = t + 1 + Math.random() * 4;
+        js.nextGlitchAt = t + 2 + Math.random() * 8;
         needsUpdate = true;
       }
 
@@ -235,6 +235,9 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     () => (seed != null ? generateFaceParams(seed) : DEFAULT_FACE_PARAMS),
     [seed]
   );
+
+  // Derive a phase offset from the seed so multiple faces don't bob in sync
+  const bobPhase = useMemo(() => (seed != null ? (seed % 1000) / 1000 * Math.PI * 2 : 0), [seed]);
 
   const upper = useMemo(() => {
     const { verts, faces } = createUpperFaceGeometry(params);
@@ -411,7 +414,7 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     const d = Math.min(delta, 0.1); // clamp to avoid huge jumps on tab refocus
     // Head movement
     if (groupRef.current) {
-      groupRef.current.position.y = Math.sin(t * 0.5) * 0.12;
+      groupRef.current.position.y = Math.sin(t * 0.5 + bobPhase) * 0.12;
 
       // Slide left/right when output panel opens/closes
       const targetX = slideLeft ? -2.5 : 0;
