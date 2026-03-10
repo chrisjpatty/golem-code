@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="golem-logo.png" alt="Summon" width="120" />
+</p>
+
 # Summon
 
 A 3D animated companion overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Summon renders a procedurally generated golem face in a floating native window that reacts in real-time to your coding agent's activity — tool calls, subagent spawns, permission requests, and more.
