@@ -55,6 +55,8 @@ export type GolemFaceHandle = {
   headShake: () => void;
   headNod: () => void;
   setExpression: (expr: MouthExpression) => void;
+  startEnvSpin: () => void;
+  stopEnvSpin: () => void;
 };
 
 type EyeGlowPhase = "off" | "ramp" | "hold" | "fade";
@@ -286,6 +288,24 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     nextSyllableAt: 0,
   });
 
+  // Material refs for per-agent env map rotation
+  const upperMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
+  const jawMatRef = useRef<THREE.MeshPhysicalMaterial>(null);
+
+  // Env map spin state
+  const ENV_SPIN_INTENSITY = 1.2;  // dimmed intensity while spinning
+  const envSpin = useRef({
+    active: false,
+    speed: 0,        // current spin speed (radians/sec)
+    targetSpeed: 0,   // target speed for damping
+    angle: 0,         // spin offset added to base rotation (0 = at rest)
+    baseX: 0,         // scene environmentRotation captured on spin start
+    baseY: 0,
+    baseZ: 0,
+    sceneIntensity: 3.0,  // scene.environmentIntensity captured on start
+    intensity: 3.0,       // current envMapIntensity (damped)
+  });
+
   // Expression state
   const mouthExpr = useRef({
     target: 'neutral' as MouthExpression,
@@ -376,9 +396,17 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
     setExpression: (expr: MouthExpression) => {
       mouthExpr.current.target = expr;
     },
+    startEnvSpin: () => {
+      envSpin.current.active = true;
+      envSpin.current.targetSpeed = 8;
+      envSpin.current.angle = 0;
+    },
+    stopEnvSpin: () => {
+      envSpin.current.targetSpeed = 0;
+    },
   }));
 
-  useFrame(({ clock }, delta) => {
+  useFrame(({ clock, scene }, delta) => {
     const t = clock.getElapsedTime();
     const d = Math.min(delta, 0.1); // clamp to avoid huge jumps on tab refocus
     // Head movement
@@ -566,21 +594,104 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
       jawPos.needsUpdate = true;
       jaw.geo.computeVertexNormals();
     }
+
+    // Env map spin — per-material rotation for permission-waiting effect
+    // Three.js only uses material.envMapRotation when material.envMap is set
+    // (otherwise it falls back to scene.environmentRotation). So we must
+    // explicitly assign the scene's environment texture to each material.
+    // We spin relative to the scene's base environmentRotation so releasing
+    // the envMap at the end is seamless (no visible snap).
+    // Intensity fades down when spinning starts and back up before releasing.
+    {
+      const es = envSpin.current;
+
+      if (es.active) {
+        // Capture scene's base rotation and intensity when we first acquire the envMap
+        const needsEnvMap = !upperMatRef.current?.envMap;
+        if (needsEnvMap && scene.environment) {
+          es.baseX = scene.environmentRotation.x;
+          es.baseY = scene.environmentRotation.y;
+          es.baseZ = scene.environmentRotation.z;
+          es.sceneIntensity = scene.environmentIntensity;
+          es.intensity = es.sceneIntensity;
+        }
+
+        if (es.targetSpeed > 0) {
+          // Spinning: accelerate toward target speed, dim intensity
+          es.speed = damp(es.speed, es.targetSpeed, 6, d);
+          es.angle += es.speed * d;
+          es.intensity = damp(es.intensity, ENV_SPIN_INTENSITY, 4, d);
+        } else {
+          // Stopping: decelerate, fade intensity back up, return angle to 0
+          es.intensity = damp(es.intensity, es.sceneIntensity, 3, d);
+          es.speed = damp(es.speed, 0, 6, d);
+
+          if (Math.abs(es.speed) < 0.05) {
+            es.speed = 0;
+            // Normalize to [-π, π] for shortest return path
+            es.angle = es.angle % (Math.PI * 2);
+            if (es.angle > Math.PI) es.angle -= Math.PI * 2;
+            if (es.angle < -Math.PI) es.angle += Math.PI * 2;
+            es.angle = damp(es.angle, 0, 1.5, d);
+
+            // Once angle AND intensity are back to origin, release envMap seamlessly
+            const angleSettled = Math.abs(es.angle) < 0.002;
+            const intensitySettled = Math.abs(es.intensity - es.sceneIntensity) < 0.02;
+            if (angleSettled && intensitySettled) {
+              es.angle = 0;
+              es.intensity = es.sceneIntensity;
+              if (upperMatRef.current) {
+                upperMatRef.current.envMapIntensity = 1.2;
+                upperMatRef.current.envMap = null;
+                upperMatRef.current.needsUpdate = true;
+              }
+              if (jawMatRef.current) {
+                jawMatRef.current.envMapIntensity = 1.2;
+                jawMatRef.current.envMap = null;
+                jawMatRef.current.needsUpdate = true;
+              }
+              es.active = false;
+            }
+          } else {
+            es.angle += es.speed * d;
+          }
+        }
+
+        // Apply rotation and intensity to materials
+        if (es.active) {
+          const rot = new THREE.Euler(es.baseX, es.baseY + es.angle, es.baseZ);
+          if (upperMatRef.current) {
+            if (!upperMatRef.current.envMap && scene.environment) {
+              upperMatRef.current.envMap = scene.environment;
+            }
+            upperMatRef.current.envMapRotation.copy(rot);
+            upperMatRef.current.envMapIntensity = es.intensity;
+            upperMatRef.current.needsUpdate = true;
+          }
+          if (jawMatRef.current) {
+            if (!jawMatRef.current.envMap && scene.environment) {
+              jawMatRef.current.envMap = scene.environment;
+            }
+            jawMatRef.current.envMapRotation.copy(rot);
+            jawMatRef.current.envMapIntensity = es.intensity;
+            jawMatRef.current.needsUpdate = true;
+          }
+        }
+      }
+    }
   });
 
-  const material = (
-    <meshPhysicalMaterial
-      color={color ?? "#cc1111"}
-      flatShading
-      roughness={0.15}
-      metalness={0.95}
-      reflectivity={1.0}
-      clearcoat={0.8}
-      clearcoatRoughness={0.1}
-      envMapIntensity={1.2}
-      side={THREE.DoubleSide}
-    />
-  );
+  const materialProps = {
+    color: color ?? "#cc1111",
+    flatShading: true,
+    roughness: 0.15,
+    metalness: 0.95,
+    reflectivity: 1.0,
+    clearcoat: 0.8,
+    clearcoatRoughness: 0.1,
+    envMapIntensity: 1.2,
+    side: THREE.DoubleSide,
+  } as const;
 
   return (
     <group ref={groupRef}>
@@ -607,13 +718,13 @@ export const GolemFace = forwardRef<GolemFaceHandle, GolemFaceProps>(function Go
 
       {/* Upper face */}
       <mesh geometry={upper.geo}>
-        {material}
+        <meshPhysicalMaterial ref={upperMatRef} {...materialProps} />
       </mesh>
 
       {/* Jaw — pivots at y=-0.3 (the mouth line) */}
       <group ref={jawRef} position={[0, -0.3, 0]}>
         <mesh geometry={jaw.geo}>
-          {material}
+          <meshPhysicalMaterial ref={jawMatRef} {...materialProps} />
         </mesh>
       </group>
     </group>

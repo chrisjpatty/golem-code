@@ -54,8 +54,9 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
             break;
           case "tool:end":
             decrementTools();
-            // Reset "oh" expression from permission:request now that the tool completed
+            // Reset permission-waiting state now that the tool completed
             faceRef.current?.setExpression("neutral");
+            faceRef.current?.stopEnvSpin();
             if (activeToolCount.current > 0) {
               faceRef.current?.startEyeGlow();
             }
@@ -69,9 +70,10 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
             subagents.markRemoving(event.toolUseId);
             break;
           case "permission:request":
-            // Waiting for user approval — show alert expression
+            // Waiting for user approval — show alert expression + spin env map
             faceRef.current?.setExpression("oh");
             faceRef.current?.stopEyeGlow();
+            faceRef.current?.startEnvSpin();
             break;
           case "activity":
             if (event.state === "idle") {
@@ -81,6 +83,7 @@ export const AgentSlot = forwardRef<AgentSlotHandle, AgentSlotProps>(
           case "turn:end":
             activeToolCount.current = 0;
             faceRef.current?.stopEyeGlow();
+            faceRef.current?.stopEnvSpin();
             faceRef.current?.setExpression("neutral");
             subagents.markAllRemoving();
             break;
