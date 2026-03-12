@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
 import { resolve, join, dirname } from "path";
-import { existsSync } from "fs";
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, rmdirSync } from "fs";
+import { homedir } from "os";
 import { parseArgs } from "./args";
-import { createSideChannelServer } from "./sideChannelServer";
+import { createSideChannelServer, type SideChannelServer, type EmbeddedAsset } from "./sideChannelServer";
 import { spawnClaude, injectText, restoreTerminal, type PtyCleanup } from "./ptySpawner";
 import { createHookTransform } from "./hookTransform";
-import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary } from "./instanceRegistry";
+import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary, hasOtherInstances } from "./instanceRegistry";
 import { FACE_COLORS, type GolemAgentInit, type GolemEvent } from "@golem-code/types";
 import { focusMyTerminal } from "./terminalFocus";
 import { ensureOverlay } from "./overlayManager";
@@ -51,13 +52,67 @@ async function buildFrontend(): Promise<void> {
   console.log("[summon] Frontend built successfully.");
 }
 
+const GOLEM_DIR = join(homedir(), ".golem");
+const OVERLAY_PID_FILE = join(GOLEM_DIR, "overlay.pid");
+const PRIMARY_LOCK_DIR = join(GOLEM_DIR, "primary.lock");
+
+/**
+ * Try to acquire the primary lock (atomic mkdir).
+ * Returns true if this process acquired it, false if another process holds it.
+ */
+function tryAcquirePrimaryLock(): boolean {
+  try {
+    mkdirSync(PRIMARY_LOCK_DIR);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releasePrimaryLock(): void {
+  try {
+    rmdirSync(PRIMARY_LOCK_DIR);
+  } catch {
+    // Lock already released
+  }
+}
+
+/** Kill any existing overlay process tracked by the PID file. */
+function killExistingOverlay(): void {
+  try {
+    const pid = parseInt(readFileSync(OVERLAY_PID_FILE, "utf-8").trim(), 10);
+    if (!isNaN(pid)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Process already gone — fine
+      }
+    }
+    unlinkSync(OVERLAY_PID_FILE);
+  } catch {
+    // No PID file or already cleaned up
+  }
+}
+
 function launchOverlay(overlayBin: string, url: string, debug?: boolean): import("bun").Subprocess | null {
+  // Ensure only one overlay exists at any time
+  killExistingOverlay();
+
   try {
     const qs = debug ? "?mode=overlay&golem-debug=1" : "?mode=overlay";
     const proc = Bun.spawn([overlayBin, `${url}${qs}`], {
       stdout: "ignore",
       stderr: "ignore",
     });
+
+    // Record PID so other instances (or promotion) can find and kill it
+    try {
+      mkdirSync(join(homedir(), ".golem"), { recursive: true });
+      writeFileSync(OVERLAY_PID_FILE, String(proc.pid));
+    } catch {
+      // Non-fatal — worst case we can't track it
+    }
+
     return proc;
   } catch (err) {
     console.error("[summon] Failed to launch overlay:", err);
@@ -91,19 +146,30 @@ function openBrowser(url: string): void {
   }
 }
 
+/** Frontend config passed to server for serving the UI */
+type FrontendConfig = {
+  embeddedAssets?: Record<string, EmbeddedAsset>;
+  staticDir?: string;
+};
+
 /**
  * Connect to an existing primary server as a peer.
  * Forwards all local GolemEvents over a WebSocket and sends
  * agent:disconnect on cleanup.
+ *
+ * If onPrimaryLost is provided, it's called once when the primary
+ * becomes unreachable (health check fails after WebSocket drops).
  */
 function connectAsPeer(
   primaryPort: number,
   agentInit: GolemAgentInit,
+  onPrimaryLost?: () => void,
 ): { send: (event: GolemEvent) => void; close: () => void } {
   const wsUrl = `ws://localhost:${primaryPort}/peer`;
   let ws: WebSocket | null = null;
   let queue: string[] = [];
   let closed = false;
+  let primaryLostFired = false;
 
   function connect() {
     if (closed) return;
@@ -133,8 +199,26 @@ function connectAsPeer(
 
     ws.onclose = () => {
       ws = null;
-      if (!closed) {
-        // Reconnect after a short delay
+      if (closed) return;
+
+      if (onPrimaryLost && !primaryLostFired) {
+        // Check if primary is truly gone before triggering promotion
+        fetch(`http://localhost:${primaryPort}/health`, {
+          signal: AbortSignal.timeout(500),
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error("unhealthy");
+            // Primary still alive, just reconnect
+            setTimeout(connect, 1000);
+          })
+          .catch(() => {
+            if (!closed && !primaryLostFired) {
+              primaryLostFired = true;
+              onPrimaryLost();
+            }
+          });
+      } else {
+        // No promotion handler or already fired — keep reconnecting
         setTimeout(connect, 1000);
       }
     };
@@ -188,6 +272,28 @@ async function main() {
   // Clean up any stale instance files from crashed sessions
   await cleanStaleInstances();
 
+  // Clean up stale primary lock if no healthy primary exists
+  if (existsSync(PRIMARY_LOCK_DIR)) {
+    const healthyPrimary = await findPrimary();
+    if (!healthyPrimary) {
+      releasePrimaryLock();
+    }
+  }
+
+  // Clean up stale overlay PID if the process is no longer running
+  try {
+    const pid = parseInt(readFileSync(OVERLAY_PID_FILE, "utf-8").trim(), 10);
+    if (!isNaN(pid)) {
+      try {
+        process.kill(pid, 0); // signal 0 = just check if alive
+      } catch {
+        unlinkSync(OVERLAY_PID_FILE); // process is dead, clean up
+      }
+    }
+  } catch {
+    // No PID file — nothing to clean
+  }
+
   const cwd = args.cwd ? resolve(args.cwd) : process.cwd();
 
   // Build Claude CLI args
@@ -214,77 +320,7 @@ async function main() {
     color: FACE_COLORS[Math.floor(Math.random() * FACE_COLORS.length)]!,
   };
 
-  // Check if an existing primary (with overlay) is running
-  const existingPrimaryPort = !args.browser ? await findPrimary() : null;
-
-  if (existingPrimaryPort) {
-    // ── Peer mode: connect to existing primary ──
-    await runAsPeer(args, claudeArgs, cwd, agentInit, existingPrimaryPort);
-  } else {
-    // ── Primary mode: start server, optionally launch overlay ──
-    await runAsPrimary(args, claudeArgs, cwd, agentInit);
-  }
-}
-
-async function runAsPeer(
-  args: ReturnType<typeof parseArgs>,
-  claudeArgs: string[],
-  cwd: string,
-  agentInit: GolemAgentInit,
-  primaryPort: number,
-) {
-  let pty: PtyCleanup | null = null;
-  let instanceId: string | null = null;
-
-  // Connect to the primary's peer WebSocket
-  const peer = connectAsPeer(primaryPort, agentInit);
-
-  // Hook transform tags events with our agentId and forwards to peer
-  const hookTransform = createHookTransform({
-    agentId: agentInit.agentId,
-    onEvent: (event) => peer.send(event),
-  });
-
-  // We still need a minimal HTTP server for the plugin to POST hooks to
-  const server = createSideChannelServer({
-    port: args.port ?? DEFAULT_PORT,
-    agentInit,
-    onHookEvent: (data) => hookTransform.handleHookEvent(data),
-  });
-
-  instanceId = registerInstance(server.port, false);
-
-  console.log(`[summon] Peer mode: connected to primary on port ${primaryPort}`);
-  console.log(`[summon] Hook server: http://localhost:${server.port}`);
-
-  function cleanup(code: number) {
-    if (instanceId) unregisterInstance(instanceId);
-    peer.close();
-    pty?.cleanup();
-    server.stop();
-    process.exit(code);
-  }
-
-  process.on("exit", () => {
-    if (instanceId) unregisterInstance(instanceId);
-    peer.close();
-    restoreTerminal();
-  });
-
-  // Spawn Claude Code in PTY
-  pty = spawnClaude(claudeArgs, cwd);
-
-  const exitCode = await pty.proc.exited;
-  cleanup(exitCode);
-}
-
-async function runAsPrimary(
-  args: ReturnType<typeof parseArgs>,
-  claudeArgs: string[],
-  cwd: string,
-  agentInit: GolemAgentInit,
-) {
-  // Resolve frontend assets
+  // Resolve frontend assets early — needed by both primary and peer (for promotion)
   const embeddedAssets = await getEmbeddedAssets();
 
   if (!IS_COMPILED && !args.dev) {
@@ -303,6 +339,203 @@ async function runAsPrimary(
     process.exit(1);
   }
 
+  const frontendConfig: FrontendConfig = embeddedAssets
+    ? { embeddedAssets }
+    : args.dev
+      ? {}
+      : { staticDir: FRONTEND_DIST! };
+
+  // Resolve overlay binary (needed by primary, and peer if it promotes)
+  let overlayBin: string | undefined;
+  if (!args.browser) {
+    if (IS_COMPILED) {
+      const pkg = await import("../package.json");
+      overlayBin = await ensureOverlay(pkg.version);
+    } else {
+      const bin = resolve(import.meta.dirname, "../../overlay/target/release/golem-overlay");
+      if (existsSync(bin)) {
+        overlayBin = bin;
+      } else {
+        console.error(`[summon] Overlay binary not found at ${bin}`);
+        console.error("[summon] Build it with: cd packages/overlay && cargo build --release");
+        process.exit(1);
+      }
+    }
+  }
+
+  // Determine primary vs peer mode.
+  // Use an atomic lock to prevent two instances from both becoming primary.
+  if (!args.browser && tryAcquirePrimaryLock()) {
+    // We hold the lock — but check if a primary already exists (e.g. stale lock was cleaned)
+    const existingPrimaryPort = await findPrimary();
+    if (existingPrimaryPort) {
+      // Primary already running — release lock and join as peer
+      releasePrimaryLock();
+      await runAsPeer(args, claudeArgs, cwd, agentInit, existingPrimaryPort, frontendConfig, overlayBin);
+    } else {
+      // ── Primary mode: start server, launch overlay ──
+      await runAsPrimary(args, claudeArgs, cwd, agentInit, frontendConfig, overlayBin);
+    }
+  } else {
+    // Couldn't acquire lock (or browser mode) — find primary and join as peer
+    // Wait briefly for the primary to finish starting up
+    let primaryPort: number | null = null;
+    for (let i = 0; i < 10; i++) {
+      primaryPort = await findPrimary();
+      if (primaryPort) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    if (primaryPort) {
+      await runAsPeer(args, claudeArgs, cwd, agentInit, primaryPort, frontendConfig, overlayBin);
+    } else if (!args.browser) {
+      // Lock holder may have crashed — force acquire and become primary
+      releasePrimaryLock();
+      tryAcquirePrimaryLock();
+      await runAsPrimary(args, claudeArgs, cwd, agentInit, frontendConfig, overlayBin);
+    }
+  }
+}
+
+async function runAsPeer(
+  args: ReturnType<typeof parseArgs>,
+  claudeArgs: string[],
+  cwd: string,
+  agentInit: GolemAgentInit,
+  primaryPort: number,
+  frontendConfig: FrontendConfig,
+  overlayBin?: string,
+) {
+  let pty: PtyCleanup | null = null;
+  let instanceId: string | null = null;
+  let promotedServer: SideChannelServer | null = null;
+
+  // Mutable event sink: initially forwards to peer, switches to local broadcast on promotion
+  let eventSink: (event: GolemEvent) => void = () => {};
+
+  const hookTransform = createHookTransform({
+    agentId: agentInit.agentId,
+    onEvent: (event) => eventSink(event),
+  });
+
+  // Minimal HTTP server for receiving hooks from our Claude Code instance
+  const hookServer = createSideChannelServer({
+    port: args.port ?? DEFAULT_PORT,
+    agentInit,
+    onHookEvent: (data) => hookTransform.handleHookEvent(data),
+  });
+
+  instanceId = registerInstance(hookServer.port, false);
+
+  // Promotion handler: called when the primary becomes unreachable
+  function handlePrimaryLost() {
+    // Try to acquire the primary lock — only one peer should promote
+    if (!tryAcquirePrimaryLock()) {
+      console.error("[summon] Primary lost, another peer is promoting — reconnecting...");
+      setTimeout(async () => {
+        const newPrimary = await findPrimary();
+        if (newPrimary && !promotedServer) {
+          const newPeer = connectAsPeer(newPrimary, agentInit, handlePrimaryLost);
+          eventSink = (event) => newPeer.send(event);
+        }
+      }, 1500);
+      return;
+    }
+
+    console.error("[summon] Primary lost, attempting promotion...");
+
+    try {
+      // Try to start a server on the old primary's port so the overlay auto-reconnects
+      promotedServer = createSideChannelServer({
+        port: primaryPort,
+        ...frontendConfig,
+        agentInit,
+        onInject: (text) => {
+          if (pty) injectText(pty.proc, text);
+        },
+        onFocusAgent: () => focusMyTerminal(),
+        onHookEvent: (data) => hookTransform.handleHookEvent(data),
+      });
+
+      // Wire events through the promoted server (overlay clients are connected here)
+      eventSink = (event) => promotedServer!.broadcast(event);
+
+      // Re-register as primary
+      if (instanceId) unregisterInstance(instanceId);
+      instanceId = registerInstance(promotedServer.port, true);
+
+      if (promotedServer.port === primaryPort) {
+        console.error(`[summon] Promoted to primary on port ${primaryPort}`);
+      } else {
+        // Couldn't get the exact port — launch a new overlay pointing to our port
+        console.error(`[summon] Promoted on port ${promotedServer.port} (overlay port ${primaryPort} busy)`);
+        if (overlayBin) {
+          launchOverlay(overlayBin, `http://localhost:${promotedServer.port}`, args.golemDebug);
+        }
+      }
+    } catch (err) {
+      console.error("[summon] Promotion failed, reconnecting as peer...");
+      // Another peer may have promoted — try to reconnect
+      setTimeout(async () => {
+        const newPrimary = await findPrimary();
+        if (newPrimary && !promotedServer) {
+          const newPeer = connectAsPeer(newPrimary, agentInit, handlePrimaryLost);
+          eventSink = (event) => newPeer.send(event);
+        }
+      }, 1500);
+    }
+  }
+
+  // Connect to the primary's peer WebSocket with promotion support
+  const peer = connectAsPeer(primaryPort, agentInit, handlePrimaryLost);
+  eventSink = (event) => peer.send(event);
+
+  console.log(`[summon] Peer mode: connected to primary on port ${primaryPort}`);
+  console.log(`[summon] Hook server: http://localhost:${hookServer.port}`);
+
+  let cleanedUp = false;
+
+  function cleanup(code: number) {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (instanceId) unregisterInstance(instanceId);
+    if (promotedServer) releasePrimaryLock();
+    peer.close();
+    pty?.cleanup();
+    hookServer.stop();
+    if (promotedServer) {
+      promotedServer.stop();
+    }
+    process.exit(code);
+  }
+
+  process.on("SIGHUP", () => cleanup(1));
+  process.on("SIGTERM", () => cleanup(1));
+  process.on("SIGINT", () => cleanup(1));
+  process.on("exit", () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (instanceId) unregisterInstance(instanceId);
+    if (promotedServer) releasePrimaryLock();
+    peer.close();
+    restoreTerminal();
+  });
+
+  // Spawn Claude Code in PTY with GOLEM_PORT so hooks target this instance's hook server
+  pty = spawnClaude(claudeArgs, cwd, { GOLEM_PORT: String(hookServer.port) });
+
+  const exitCode = await pty.proc.exited;
+  cleanup(exitCode);
+}
+
+async function runAsPrimary(
+  args: ReturnType<typeof parseArgs>,
+  claudeArgs: string[],
+  cwd: string,
+  agentInit: GolemAgentInit,
+  frontendConfig: FrontendConfig,
+  overlayBin?: string,
+) {
   let pty: PtyCleanup | null = null;
   let overlayProc: import("bun").Subprocess | null = null;
   let instanceId: string | null = null;
@@ -319,11 +552,7 @@ async function runAsPrimary(
   const server = createSideChannelServer({
     port: args.port ?? DEFAULT_PORT,
     agentInit,
-    ...(embeddedAssets
-      ? { embeddedAssets }
-      : args.dev
-        ? {}
-        : { staticDir: FRONTEND_DIST! }),
+    ...frontendConfig,
     onInject: (text) => {
       if (pty) {
         injectText(pty.proc, text);
@@ -352,39 +581,44 @@ async function runAsPrimary(
     if (!args.noOpen && !args.dev) {
       openBrowser(url);
     }
-  } else {
-    // Resolve the overlay binary
-    let overlayBin: string;
-    if (IS_COMPILED) {
-      const pkg = await import("../package.json");
-      overlayBin = await ensureOverlay(pkg.version);
-    } else {
-      overlayBin = resolve(import.meta.dirname, "../../overlay/target/release/golem-overlay");
-      if (!existsSync(overlayBin)) {
-        console.error(`[summon] Overlay binary not found at ${overlayBin}`);
-        console.error("[summon] Build it with: cd packages/overlay && cargo build --release");
-        process.exit(1);
-      }
-    }
+  } else if (overlayBin) {
     overlayProc = launchOverlay(overlayBin, url, args.golemDebug);
   }
 
+  let cleanedUp = false;
+
   function cleanup(code: number) {
+    if (cleanedUp) return;
+    cleanedUp = true;
     if (instanceId) unregisterInstance(instanceId);
-    overlayProc?.kill();
+    releasePrimaryLock();
+    // Only kill overlay if no other instances are running to take over
+    if (overlayProc && !hasOtherInstances()) {
+      overlayProc.kill();
+      try { unlinkSync(OVERLAY_PID_FILE); } catch {}
+    }
     pty?.cleanup();
     server.stop();
     process.exit(code);
   }
 
+  process.on("SIGHUP", () => cleanup(1));
+  process.on("SIGTERM", () => cleanup(1));
+  process.on("SIGINT", () => cleanup(1));
   process.on("exit", () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     if (instanceId) unregisterInstance(instanceId);
-    overlayProc?.kill();
+    releasePrimaryLock();
+    if (overlayProc && !hasOtherInstances()) {
+      overlayProc.kill();
+      try { unlinkSync(OVERLAY_PID_FILE); } catch {}
+    }
     restoreTerminal();
   });
 
   // Spawn Claude Code in PTY — after this point, stdout belongs to the PTY.
-  pty = spawnClaude(claudeArgs, cwd);
+  pty = spawnClaude(claudeArgs, cwd, { GOLEM_PORT: String(server.port) });
 
   const exitCode = await pty.proc.exited;
   cleanup(exitCode);

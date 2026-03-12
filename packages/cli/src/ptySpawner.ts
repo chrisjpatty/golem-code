@@ -17,7 +17,7 @@ export type PtyCleanup = {
   cleanup: () => void;
 };
 
-export function spawnClaude(args: string[], cwd: string): PtyCleanup {
+export function spawnClaude(args: string[], cwd: string, env?: Record<string, string>): PtyCleanup {
   const proc = Bun.spawn(["claude", ...args], {
     cwd,
     terminal: {
@@ -27,7 +27,7 @@ export function spawnClaude(args: string[], cwd: string): PtyCleanup {
         process.stdout.write(data);
       },
     },
-    env: { ...process.env },
+    env: { ...process.env, ...env },
   }) as PtyProcess;
 
   // Forward real stdin to PTY in raw mode for immediate key pass-through
