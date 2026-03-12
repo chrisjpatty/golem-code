@@ -86,17 +86,19 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
     );
   }
 
-  // Download the new binary — stream to a temp file to avoid buffering in memory
+  // Download the new binary
   console.log(`[summon] Downloading ${assetName}...`);
-  const downloadRes = await fetch(asset.browser_download_url);
+  const downloadRes = await fetch(asset.browser_download_url, { redirect: "follow" });
   if (!downloadRes.ok) {
     throw new Error(`Download failed: ${downloadRes.status}`);
   }
 
+  const binary = await downloadRes.arrayBuffer();
+
   const execPath = process.execPath;
   const tmpPath = `${execPath}.tmp`;
 
-  await Bun.write(tmpPath, downloadRes);
+  await Bun.write(tmpPath, binary);
   chmodSync(tmpPath, 0o755);
 
   // Unlink the old binary, then rename the temp file into place.
