@@ -124,19 +124,5 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
     throw new Error(`Failed to replace binary: ${err}${detail}`);
   }
 
-  const line = "─".repeat(58);
-  console.log("");
-  console.log(`  ${line}`);
-  console.log(`  ✓  Summon updated: ${currentVersion} → ${latestVersion}`);
-  console.log("");
-  console.log("  To update the Claude Code plugin, run these commands");
-  console.log("  inside Claude Code:");
-  console.log("");
-  console.log(`     \x1b[1m/plugin marketplace add chrisjpatty/golem-code\x1b[0m`);
-  console.log(`     \x1b[1m/plugin install golem-code\x1b[0m`);
-  console.log(`     \x1b[1m/reload-plugins\x1b[0m`);
-  console.log("");
-  console.log("  Then restart summon to use the new version.");
-  console.log(`  ${line}`);
-  console.log("");
+  console.log(`[summon] Updated to ${latestVersion}. Restart summon to use the new version.`);
 }

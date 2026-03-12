@@ -84,11 +84,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Stamp version into CLI package.json
+      - name: Stamp version into package files
         run: |
-          cd packages/cli
-          jq --arg v "${{ needs.tag.outputs.version }}" '.version = $v' package.json > package.json.tmp
-          mv package.json.tmp package.json
+          VERSION="${{ needs.tag.outputs.version }}"
+          jq --arg v "$VERSION" '.version = $v' packages/cli/package.json > tmp && mv tmp packages/cli/package.json
+          jq --arg v "$VERSION" '.version = $v' packages/plugin/.claude-plugin/plugin.json > tmp && mv tmp packages/plugin/.claude-plugin/plugin.json
+          jq --arg v "$VERSION" '.plugins[0].version = $v' .claude-plugin/marketplace.json > tmp && mv tmp .claude-plugin/marketplace.json
 
       - name: Build
         run: bun run build --target=${{ matrix.target }}
@@ -136,12 +137,11 @@ jobs:
       - name: Commit version bump to main
         run: |
           VERSION="${{ needs.tag.outputs.version }}"
-          cd packages/cli
-          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
-          mv package.json.tmp package.json
-          cd ../..
+          jq --arg v "$VERSION" '.version = $v' packages/cli/package.json > tmp && mv tmp packages/cli/package.json
+          jq --arg v "$VERSION" '.version = $v' packages/plugin/.claude-plugin/plugin.json > tmp && mv tmp packages/plugin/.claude-plugin/plugin.json
+          jq --arg v "$VERSION" '.plugins[0].version = $v' .claude-plugin/marketplace.json > tmp && mv tmp .claude-plugin/marketplace.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/cli/package.json
+          git add packages/cli/package.json packages/plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
           git commit -m "chore: bump version to ${VERSION}"
           git push origin HEAD:main
