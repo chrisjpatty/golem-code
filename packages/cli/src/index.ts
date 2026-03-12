@@ -11,7 +11,7 @@ import { registerInstance, unregisterInstance, cleanStaleInstances, findPrimary,
 import { FACE_COLORS, type GolemAgentInit, type GolemEvent } from "@golem-code/types";
 import { focusMyTerminal } from "./terminalFocus";
 import { ensureOverlay } from "./overlayManager";
-import { selfUpdate } from "./selfUpdate";
+import { selfUpdate, checkForUpdate } from "./selfUpdate";
 
 const DEFAULT_PORT = 6661;
 
@@ -252,22 +252,38 @@ function connectAsPeer(
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
+  const pkg = await import("../package.json");
+
+  // Print banner
+  const RED = "\x1b[31m";
+  const RESET = "\x1b[0m";
+  const DIM = "\x1b[2m";
+  console.log(RED +
+`  ▄▀  ████▄ █     ▄███▄   █▀▄▀█
+▄▀    █   █ █     █▀   ▀  █ █ █
+█ ▀▄  █   █ █     ██▄▄    █ ▄ █
+█   █ ▀████ ███▄  █▄   ▄▀ █   █
+ ███            ▀ ▀███▀      █
+                            ▀  ` + RESET);
+  console.log(`${DIM}                    v${pkg.version}${RESET}`);
+
   if (args.help) {
     printHelp();
     process.exit(0);
   }
 
   if (args.version) {
-    const pkg = await import("../package.json");
     console.log(`summon (golem-code) ${pkg.version}`);
     process.exit(0);
   }
 
   if (args.update) {
-    const pkg = await import("../package.json");
     await selfUpdate(pkg.version);
     process.exit(0);
   }
+
+  // Fire-and-forget update check — runs in parallel with startup, never blocks
+  checkForUpdate(pkg.version);
 
   // Clean up any stale instance files from crashed sessions
   await cleanStaleInstances();
@@ -319,6 +335,9 @@ async function main() {
     seed: Math.floor(Math.random() * 2 ** 32),
     color: FACE_COLORS[Math.floor(Math.random() * FACE_COLORS.length)]!,
   };
+
+  console.log(`\x1b[2m                    seed: ${agentInit.seed}\x1b[0m`);
+  console.log("");
 
   // Resolve frontend assets early — needed by both primary and peer (for promotion)
   const embeddedAssets = await getEmbeddedAssets();

@@ -27,6 +27,35 @@ function getAssetName(): string {
   return `summon-darwin-${arch}`;
 }
 
+/**
+ * Non-blocking startup check: fetches the latest release and prints a
+ * notice if the running binary is behind.  Swallows all errors silently
+ * so it never interferes with normal startup.
+ */
+export async function checkForUpdate(currentVersion: string): Promise<void> {
+  try {
+    const res = await fetch(RELEASES_API, {
+      headers: { Accept: "application/vnd.github.v3+json" },
+      signal: AbortSignal.timeout(3000), // don't hang startup
+    });
+    if (!res.ok) return;
+
+    const release = (await res.json()) as Release;
+    const latestVersion = release.tag_name.replace(/^v/, "");
+    if (latestVersion === currentVersion) return;
+
+    const line = "─".repeat(52);
+    console.log("");
+    console.log(`  ${line}`);
+    console.log(`  ⬆  Update available: ${currentVersion} → ${latestVersion}`);
+    console.log(`     Run \x1b[1msummon --update\x1b[0m to upgrade`);
+    console.log(`  ${line}`);
+    console.log("");
+  } catch {
+    // Network errors, timeouts, JSON parse failures — all silently ignored.
+  }
+}
+
 export async function selfUpdate(currentVersion: string): Promise<void> {
   console.log(`[summon] Current version: ${currentVersion}`);
   console.log("[summon] Checking for updates...");
@@ -95,5 +124,19 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
     throw new Error(`Failed to replace binary: ${err}${detail}`);
   }
 
-  console.log(`[summon] Updated to ${latestVersion}. Restart summon to use the new version.`);
+  const line = "─".repeat(58);
+  console.log("");
+  console.log(`  ${line}`);
+  console.log(`  ✓  Summon updated: ${currentVersion} → ${latestVersion}`);
+  console.log("");
+  console.log("  To update the Claude Code plugin, run these commands");
+  console.log("  inside Claude Code:");
+  console.log("");
+  console.log(`     \x1b[1m/plugin marketplace add chrisjpatty/golem-code\x1b[0m`);
+  console.log(`     \x1b[1m/plugin install golem-code\x1b[0m`);
+  console.log(`     \x1b[1m/reload-plugins\x1b[0m`);
+  console.log("");
+  console.log("  Then restart summon to use the new version.");
+  console.log(`  ${line}`);
+  console.log("");
 }

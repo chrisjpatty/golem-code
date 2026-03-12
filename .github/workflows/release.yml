@@ -84,6 +84,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Stamp version into CLI package.json
+        run: |
+          cd packages/cli
+          jq --arg v "${{ needs.tag.outputs.version }}" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+
       - name: Build
         run: bun run build --target=${{ matrix.target }}
 
@@ -117,3 +123,25 @@ jobs:
           name: v${{ needs.tag.outputs.version }}
           generate_release_notes: true
           files: artifacts/**/*
+
+  update-version:
+    needs: [tag, release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Commit version bump to main
+        run: |
+          VERSION="${{ needs.tag.outputs.version }}"
+          cd packages/cli
+          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          cd ../..
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/cli/package.json
+          git commit -m "chore: bump version to ${VERSION}"
+          git push origin HEAD:main
