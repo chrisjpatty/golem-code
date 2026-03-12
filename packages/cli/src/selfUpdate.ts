@@ -3,7 +3,7 @@
  * and replaces the current executable in-place.
  */
 
-import { existsSync, unlinkSync, chmodSync, copyFileSync } from "fs";
+import { existsSync, unlinkSync, chmodSync, renameSync } from "fs";
 
 const REPO = "chrisjpatty/golem-code";
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -99,12 +99,14 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
   await Bun.write(tmpPath, downloadRes);
   chmodSync(tmpPath, 0o755);
 
-  // Overwrite the binary in place by copying contents onto the existing path.
-  // Using rename would move the running executable's inode, which can cause
-  // the process to hang or crash on macOS before it finishes.
+  // Unlink the old binary, then rename the temp file into place.
+  // unlink removes the directory entry but the kernel keeps the old inode
+  // alive for this process and any other running instances that have it
+  // memory-mapped. The rename gives the new binary a fresh inode at the
+  // same path, so no running process is affected.
   try {
-    copyFileSync(tmpPath, execPath);
-    unlinkSync(tmpPath);
+    unlinkSync(execPath);
+    renameSync(tmpPath, execPath);
   } catch (err) {
     if (existsSync(tmpPath)) {
       try { unlinkSync(tmpPath); } catch {}
