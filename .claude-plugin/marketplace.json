@@ -1,12 +1,14 @@
 {
   "name": "golem-code",
-  "owner": { "name": "golem-code" },
+  "owner": {
+    "name": "golem-code"
+  },
   "plugins": [
     {
       "name": "golem-code",
       "source": "./packages/plugin",
       "description": "Ambient 3D companion for Claude Code — routes Claude's tool and agent events to the Golem visualization server",
-      "version": "0.1.0"
+      "version": "0.2.2"
     }
   ]
 }
