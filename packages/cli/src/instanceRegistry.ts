@@ -81,6 +81,16 @@ export async function findPrimary(): Promise<number | null> {
   return results.find((port) => port !== null) ?? null;
 }
 
+/** Check if any other instances are registered (call after unregistering self). */
+export function hasOtherInstances(): boolean {
+  try {
+    const files = readdirSync(INSTANCES_DIR);
+    return files.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Remove stale instance files (ports that aren't responding). */
 export async function cleanStaleInstances(): Promise<void> {
   let files: string[];

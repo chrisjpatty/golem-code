@@ -134,7 +134,7 @@ fn query_agent_count(server_port: u16) -> usize {
             }
             1 // fallback: assume at least 1 agent
         }
-        Err(_) => 1,
+        Err(_) => 0, // 0 signals "server unreachable"
     }
 }
 
@@ -224,6 +224,8 @@ fn main() {
                     let mut agent_count: usize = 1;
                     let mut face_positions = compute_face_positions(agent_count);
                     let mut poll_counter: u32 = 0;
+                    let mut health_failures: u32 = 0;
+                    const MAX_HEALTH_FAILURES: u32 = 10; // ~20 seconds with no server
 
                     // Drag state machine (all tracked in this thread)
                     // Phase 1: mouse pressed over face → pending drag
@@ -239,9 +241,18 @@ fn main() {
                         // Refresh agent count every ~2 seconds
                         if poll_counter % 120 == 0 {
                             let new_count = query_agent_count(server_port);
-                            if new_count != agent_count {
-                                agent_count = new_count;
-                                face_positions = compute_face_positions(agent_count);
+                            if new_count == 0 {
+                                health_failures += 1;
+                                if health_failures >= MAX_HEALTH_FAILURES {
+                                    // No server responding for too long — exit
+                                    std::process::exit(0);
+                                }
+                            } else {
+                                health_failures = 0;
+                                if new_count != agent_count {
+                                    agent_count = new_count;
+                                    face_positions = compute_face_positions(agent_count);
+                                }
                             }
                         }
 

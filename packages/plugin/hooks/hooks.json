@@ -5,8 +5,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:6661/hook"
+            "type": "command",
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -16,8 +16,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:6661/hook"
+            "type": "command",
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -27,8 +27,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:6661/hook"
+            "type": "command",
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -38,8 +38,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:6661/hook"
+            "type": "command",
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -49,8 +49,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:6661/hook"
+            "type": "command",
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
