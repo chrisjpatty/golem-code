@@ -3,8 +3,7 @@
  * and replaces the current executable in-place.
  */
 
-import { existsSync, renameSync, unlinkSync, chmodSync } from "fs";
-import { join } from "path";
+import { existsSync, unlinkSync, chmodSync, copyFileSync } from "fs";
 
 const REPO = "chrisjpatty/golem-code";
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -96,47 +95,22 @@ export async function selfUpdate(currentVersion: string): Promise<void> {
 
   const execPath = process.execPath;
   const tmpPath = `${execPath}.tmp`;
-  const backupPath = `${execPath}.bak`;
 
   await Bun.write(tmpPath, downloadRes);
   chmodSync(tmpPath, 0o755);
 
-  // Swap binaries with backup for rollback safety
+  // Overwrite the binary in place by copying contents onto the existing path.
+  // Using rename would move the running executable's inode, which can cause
+  // the process to hang or crash on macOS before it finishes.
   try {
-    if (existsSync(backupPath)) unlinkSync(backupPath);
-    renameSync(execPath, backupPath);
-    renameSync(tmpPath, execPath);
-    unlinkSync(backupPath);
+    copyFileSync(tmpPath, execPath);
+    unlinkSync(tmpPath);
   } catch (err) {
-    // Try to restore from backup
-    if (existsSync(backupPath) && !existsSync(execPath)) {
-      try {
-        renameSync(backupPath, execPath);
-      } catch {
-        // If restore fails, tell user where backup is
-      }
-    }
-    // Clean up temp file
     if (existsSync(tmpPath)) {
       try { unlinkSync(tmpPath); } catch {}
     }
-    const detail = existsSync(backupPath) ? `\nBackup is at: ${backupPath}` : "";
-    throw new Error(`Failed to replace binary: ${err}${detail}`);
+    throw new Error(`Failed to replace binary: ${err}`);
   }
 
-  const line = "─".repeat(58);
-  console.log("");
-  console.log(`  ${line}`);
-  console.log(`  ✓  Summon updated: ${currentVersion} → ${latestVersion}`);
-  console.log("");
-  console.log("  To update the Claude Code plugin, run these commands");
-  console.log("  inside Claude Code:");
-  console.log("");
-  console.log(`     \x1b[1m/plugin marketplace add chrisjpatty/golem-code\x1b[0m`);
-  console.log(`     \x1b[1m/plugin install golem-code\x1b[0m`);
-  console.log(`     \x1b[1m/reload-plugins\x1b[0m`);
-  console.log("");
-  console.log("  Then restart summon to use the new version.");
-  console.log(`  ${line}`);
-  console.log("");
+  console.log(`[summon] Updated to ${latestVersion}. Restart summon to use the new version.`);
 }
