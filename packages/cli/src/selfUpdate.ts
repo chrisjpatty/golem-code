@@ -31,11 +31,11 @@ function getAssetName(): string {
  * notice if the running binary is behind.  Swallows all errors silently
  * so it never interferes with normal startup.
  */
-export async function checkForUpdate(currentVersion: string): Promise<void> {
+export async function checkForUpdate(currentVersion: string, signal?: AbortSignal): Promise<void> {
   try {
     const res = await fetch(RELEASES_API, {
       headers: { Accept: "application/vnd.github.v3+json" },
-      signal: AbortSignal.timeout(3000), // don't hang startup
+      signal: signal ?? AbortSignal.timeout(3000),
     });
     if (!res.ok) return;
 

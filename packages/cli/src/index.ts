@@ -282,8 +282,12 @@ async function main() {
     process.exit(0);
   }
 
-  // Fire-and-forget update check — runs in parallel with startup, never blocks
-  checkForUpdate(pkg.version);
+  // Check for updates with a 1s timeout — must complete before PTY takes over stdout
+  const updateAbort = new AbortController();
+  await Promise.race([
+    checkForUpdate(pkg.version, updateAbort.signal),
+    new Promise<void>((r) => setTimeout(() => { updateAbort.abort(); r(); }, 1000)),
+  ]);
 
   // Clean up any stale instance files from crashed sessions
   await cleanStaleInstances();
