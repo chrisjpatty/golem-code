@@ -18,6 +18,9 @@ export type PtyCleanup = {
 };
 
 export function spawnClaude(args: string[], cwd: string, env?: Record<string, string>): PtyCleanup {
+  // Remove CLAUDECODE env var so Claude Code doesn't think it's nested
+  const { CLAUDECODE: _, ...parentEnv } = process.env;
+
   const proc = Bun.spawn(["claude", ...args], {
     cwd,
     terminal: {
@@ -27,13 +30,14 @@ export function spawnClaude(args: string[], cwd: string, env?: Record<string, st
         process.stdout.write(data);
       },
     },
-    env: { ...process.env, ...env },
+    env: { ...parentEnv, ...env },
   }) as PtyProcess;
 
   // Forward real stdin to PTY in raw mode for immediate key pass-through
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
   }
+
   process.stdin.resume();
 
   const onStdinData = (chunk: Buffer) => {

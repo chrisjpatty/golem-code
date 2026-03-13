@@ -56,6 +56,17 @@ export async function checkForUpdate(currentVersion: string, signal?: AbortSigna
 }
 
 export async function selfUpdate(currentVersion: string): Promise<void> {
+  // When running via `bun run index.ts` (dev/symlink), process.execPath
+  // points to the bun runtime — NOT the summon script. Replacing it would
+  // destroy the user's bun installation. Only allow self-update for the
+  // compiled binary, where process.execPath IS the summon binary.
+  const isCompiled = import.meta.dirname.startsWith("/$bunfs");
+  if (!isCompiled) {
+    console.error("[summon] Self-update is only supported for the compiled binary.");
+    console.error("[summon] When running from source, pull the latest changes with git instead.");
+    process.exit(1);
+  }
+
   console.log(`[summon] Current version: ${currentVersion}`);
   console.log("[summon] Checking for updates...");
 
