@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -o /dev/null -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -o /dev/null -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -o /dev/null -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -o /dev/null -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
+            "command": "[ -n \"$GOLEM_PORT\" ] && curl -s -o /dev/null -X POST http://localhost:$GOLEM_PORT/hook -H 'Content-Type: application/json' -d \"$(cat)\" || true"
           }
         ]
       }
