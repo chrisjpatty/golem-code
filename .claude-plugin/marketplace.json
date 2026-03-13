@@ -8,7 +8,7 @@
       "name": "golem-code",
       "source": "./packages/plugin",
       "description": "Ambient 3D companion for Claude Code — routes Claude's tool and agent events to the Golem visualization server",
-      "version": "0.2.6"
+      "version": "0.2.7"
     }
   ]
 }
