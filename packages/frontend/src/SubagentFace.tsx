@@ -82,11 +82,11 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
       glowStarted.current = true;
     }
 
-    // Pop-in / pop-out scale (targetScale adjusts for crowd density, faceScale matches parent)
-    // Use a soft power curve so subagents don't become invisible at small faceScale values
-    // e.g. faceScale=0.18 → overlayFactor≈0.25 → subagent is ~25% of main face size
-    const overlayFactor = Math.pow(faceScale, 0.4) * 0.5;
-    const effectiveTargetScale = targetScale * overlayFactor;
+    // Pop-in / pop-out scale (targetScale adjusts for crowd density)
+    // Subagents are children of the parent group which is already scaled by faceScale,
+    // so we don't need additional overlay scaling here — just use targetScale directly.
+    const isOverlay = faceScale < 1;
+    const effectiveTargetScale = targetScale;
     if (removing) {
       scaleRef.current = damp(scaleRef.current, 0, 6, d);
       if (scaleRef.current < 0.005) {
@@ -102,19 +102,19 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
 
     // Compute and smoothly damp wander bounds based on viewport and panel state
     // When faceScale < 1 (overlay mode), constrain movement to a small radius
-    // around the parent agent instead of using viewport-sized bounds
-    const WANDER_RADIUS = 1.2; // scene units radius at full scale
-    const wanderRadius = WANDER_RADIUS * overlayFactor;
-    const isOverlay = faceScale < 1;
-    const vw = isOverlay ? wanderRadius * 2 : (boundsWidth ?? viewport.width);
-    const vh = isOverlay ? wanderRadius * 2 : viewport.height;
+    // around the parent agent instead of using viewport-sized bounds.
+    // Coordinates are in parent-local space (parent is already scaled by faceScale),
+    // so use WANDER_RADIUS directly — no additional scaling needed.
+    const WANDER_RADIUS = 2.25; // scene units radius in parent-local space
+    const vw = isOverlay ? WANDER_RADIUS * 2 : (boundsWidth ?? viewport.width);
+    const vh = isOverlay ? WANDER_RADIUS * 2 : viewport.height;
     const padX = vw * PADDING;
     const padY = vh * PADDING;
     // Panel open: left half of screen. Panel closed: full screen.
     // In overlay (faceScale < 1), always center on parent agent (0,0 in local group)
     const targetCenterX = isOverlay ? 0 : (panelOpen ? -vw / 4 : 0);
-    const targetHalfW = isOverlay ? (wanderRadius - padX) : ((panelOpen ? vw / 4 : vw / 2) - padX);
-    const targetHalfH = isOverlay ? (wanderRadius - padY) : (vh / 2 - padY);
+    const targetHalfW = isOverlay ? (WANDER_RADIUS - padX) : ((panelOpen ? vw / 4 : vw / 2) - padX);
+    const targetHalfH = isOverlay ? (WANDER_RADIUS - padY) : (vh / 2 - padY);
 
     const b = boundsRef.current;
     // On first frame, snap bounds so sub-agents launch from the correct
@@ -141,10 +141,9 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
 
     // Compute repulsion from nearby subagents
     // Scale repulsion distance and strength with current size so small faces don't fly apart
-    const effectiveBaseScale = BASE_SCALE * overlayFactor;
-    const scaleFactor = s / effectiveBaseScale;
-    const repulseThreshold = BASE_REPULSE_THRESHOLD * overlayFactor * scaleFactor;
-    const repulseStrength = BASE_REPULSE_STRENGTH * overlayFactor * scaleFactor;
+    const scaleFactor = s / BASE_SCALE;
+    const repulseThreshold = BASE_REPULSE_THRESHOLD * scaleFactor;
+    const repulseStrength = BASE_REPULSE_STRENGTH * scaleFactor;
     let pushX = 0;
     let pushY = 0;
     const map = positions.current;
@@ -172,19 +171,19 @@ export function SubagentFace({ subagent, panelOpen = false, positions, targetSca
     let finalY = desiredY + r.y;
 
     // In overlay mode, clamp to viewport bounds so subagents don't wander off screen.
-    // The parent group is offset by SceneAnchor to (vw/2 - padAnchorX, -vh/2 + padAnchorY).
-    // Subagent world pos = anchorOffset + localPos, must stay within [-vw/2, vw/2] x [-vh/2, vh/2].
+    // The parent group is at SceneAnchor (vw/2 - padAnchorX, -vh/2 + padAnchorY) and
+    // scaled by faceScale. Convert viewport bounds to parent-local coordinates.
     if (isOverlay) {
       const anchorPadX = 0.45;
       const anchorPadY = 0.55;
       const anchorX = viewport.width / 2 - anchorPadX;
       const anchorY = -viewport.height / 2 + anchorPadY;
-      // Max local offset so world pos stays on screen (with small margin for face size)
+      // Convert world bounds to parent-local space by dividing by faceScale
       const margin = s * 0.5;
-      const minX = -viewport.width / 2 - anchorX + margin;
-      const maxX = viewport.width / 2 - anchorX - margin;
-      const minY = -viewport.height / 2 - anchorY + margin;
-      const maxY = viewport.height / 2 - anchorY - margin;
+      const minX = (-viewport.width / 2 - anchorX + margin) / faceScale;
+      const maxX = (viewport.width / 2 - anchorX - margin) / faceScale;
+      const minY = (-viewport.height / 2 - anchorY + margin) / faceScale;
+      const maxY = (viewport.height / 2 - anchorY - margin) / faceScale;
       finalX = Math.max(minX, Math.min(maxX, finalX));
       finalY = Math.max(minY, Math.min(maxY, finalY));
     }
